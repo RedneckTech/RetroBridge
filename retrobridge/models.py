@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, String, Text,
@@ -17,6 +18,8 @@ class User(Base):
     email = Column(String(120), unique=True, nullable=False)
     password_hash = Column(String(256), nullable=False)
     full_name = Column(String(128), nullable=True)
+    bio = Column(Text, nullable=True)
+    preferences = Column(Text, nullable=True)
     is_admin = Column(Boolean, default=False, nullable=False)
     max_queued_jobs = Column(Integer, default=3, nullable=False)
     max_terminal_sessions = Column(Integer, default=1, nullable=False)
@@ -25,6 +28,10 @@ class User(Base):
 
     jobs = relationship('Job', back_populates='user')
     terminal_sessions = relationship('TerminalSession', back_populates='user')
+
+    def avatar_url(self, size=80):
+        h = hashlib.md5(self.email.strip().lower().encode()).hexdigest()
+        return f'https://www.gravatar.com/avatar/{h}?s={size}&d=identicon&r=g'
 
     @property
     def is_authenticated(self):

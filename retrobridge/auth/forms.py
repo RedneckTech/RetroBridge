@@ -1,6 +1,6 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, BooleanField, SubmitField
-from wtforms.validators import DataRequired, Length, Email, EqualTo, Optional
+from wtforms import StringField, PasswordField, BooleanField, SubmitField, TextAreaField, IntegerField, SelectField
+from wtforms.validators import DataRequired, Length, Email, EqualTo, Optional, NumberRange
 
 
 class LoginForm(FlaskForm):
@@ -28,6 +28,14 @@ class RegistrationForm(FlaskForm):
 class ProfileForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Email(), Length(max=120)])
     full_name = StringField('Full Name', validators=[Optional(), Length(max=128)])
+    bio = TextAreaField('Bio', validators=[Optional(), Length(max=500)])
+    terminal_font_size = IntegerField('Terminal Font Size', validators=[NumberRange(min=10, max=24)], default=14)
+    terminal_color_scheme = SelectField('Terminal Theme', choices=[
+        ('dark', 'Dark (Green on Black)'),
+        ('amber', 'Amber (Amber on Black)'),
+        ('light', 'Light (Black on White)'),
+        ('cyan', 'Cyan (Cyan on Black)'),
+    ], default='dark')
     new_password = PasswordField('New Password', validators=[Optional(), Length(min=8)])
     confirm_password = PasswordField('Confirm New Password', validators=[
         EqualTo('new_password', message='Passwords must match.'),

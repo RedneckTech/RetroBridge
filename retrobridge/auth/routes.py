@@ -1,3 +1,5 @@
+import json
+
 from flask import render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -68,10 +70,26 @@ def logout():
 @login_required
 def profile():
     form = ProfileForm(obj=current_user)
+
+    if request.method == 'GET':
+        prefs = {}
+        if current_user.preferences:
+            try:
+                prefs = json.loads(current_user.preferences)
+            except json.JSONDecodeError:
+                pass
+        form.terminal_font_size.data = prefs.get('terminal_font_size', 14)
+        form.terminal_color_scheme.data = prefs.get('terminal_color_scheme', 'dark')
+
     if form.validate_on_submit():
         from flask import current_app
         current_user.email = form.email.data
         current_user.full_name = form.full_name.data
+        current_user.bio = form.bio.data
+        current_user.preferences = json.dumps({
+            'terminal_font_size': form.terminal_font_size.data,
+            'terminal_color_scheme': form.terminal_color_scheme.data,
+        })
         if form.new_password.data:
             current_user.password_hash = generate_password_hash(form.new_password.data)
         current_app.db_session.commit()

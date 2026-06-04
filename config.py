@@ -10,6 +10,7 @@ class BaseConfig:
     REMEMBER_COOKIE_DURATION = timedelta(hours=24)
     WTF_CSRF_ENABLED = True
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB default
+    SQLALCHEMY_ENGINE_POOLCLASS = 'NullPool'
     SQLALCHEMY_ENGINE_OPTIONS = {
         'connect_args': {
             'timeout': 10,
@@ -37,6 +38,7 @@ class TestConfig(BaseConfig):
     TESTING = True
     SOCKETIO_ASYNC_MODE = 'threading'
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    SQLALCHEMY_ENGINE_POOLCLASS = 'StaticPool'
     WTF_CSRF_ENABLED = False
 
 
