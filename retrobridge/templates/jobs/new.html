@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}New Job{% endblock %}
+{% block content %}
+<h2>Submit New Job</h2>
+<div class="row">
+    <div class="col-md-6">
+        <form method="POST" enctype="multipart/form-data">
+            {{ form.hidden_tag() }}
+            <div class="mb-3">
+                {{ form.device_id.label(class="form-label") }}
+                {{ form.device_id(class="form-select" + (" is-invalid" if form.device_id.errors else "")) }}
+                {% for error in form.device_id.errors %}
+                <div class="invalid-feedback">{{ error }}</div>
+                {% endfor %}
+            </div>
+            <div class="mb-3">
+                {{ form.file.label(class="form-label") }}
+                {{ form.file(class="form-control" + (" is-invalid" if form.file.errors else "")) }}
+                {% for error in form.file.errors %}
+                <div class="invalid-feedback">{{ error }}</div>
+                {% endfor %}
+                <div class="form-text">Accepted: .bin, .hex, .obj, .asm, .s, .txt (max 8 MB)</div>
+            </div>
+            <div class="mb-3">
+                {{ form.priority.label(class="form-label") }}
+                {{ form.priority(class="form-control" + (" is-invalid" if form.priority.errors else "")) }}
+                {% for error in form.priority.errors %}
+                <div class="invalid-feedback">{{ error }}</div>
+                {% endfor %}
+                <div class="form-text">Higher priority jobs run first (0-9)</div>
+            </div>
+            {{ form.submit(class="btn btn-primary") }}
+            <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-outline-secondary">Cancel</a>
+        </form>
+    </div>
+</div>
+{% endblock %}

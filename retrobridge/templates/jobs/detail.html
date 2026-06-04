@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Job #{{ job.id }}{% endblock %}
+{% block content %}
+<h2>Job #{{ job.id }}</h2>
+
+<div class="row">
+    <div class="col-md-8">
+        <table class="table">
+            <tr><th>Filename</th><td>{{ job.original_filename }}</td></tr>
+            <tr><th>Device</th><td>{{ job.device.name if job.device else 'N/A' }}</td></tr>
+            <tr><th>Status</th>
+                <td>
+                    {% if job.status == 'queued' %}
+                    <span class="badge bg-warning text-dark">Queued</span>
+                    {% elif job.status == 'running' %}
+                    <span class="badge bg-info">Running</span>
+                    {% elif job.status == 'completed' %}
+                    <span class="badge bg-success">Completed</span>
+                    {% elif job.status == 'failed' %}
+                    <span class="badge bg-danger">Failed</span>
+                    {% elif job.status == 'canceled' %}
+                    <span class="badge bg-secondary">Canceled</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr><th>Priority</th><td>{{ job.priority }}</td></tr>
+            <tr><th>File Size</th><td>{{ (job.file_size_bytes / 1024) | round(1) if job.file_size_bytes else 'N/A' }} KB</td></tr>
+            <tr><th>Created</th><td>{{ job.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if job.created_at else 'N/A' }}</td></tr>
+            <tr><th>Started</th><td>{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S UTC') if job.started_at else 'N/A' }}</td></tr>
+            <tr><th>Finished</th><td>{{ job.finished_at.strftime('%Y-%m-%d %H:%M:%S UTC') if job.finished_at else 'N/A' }}</td></tr>
+            <tr><th>Runtime</th><td>{{ job.runtime_seconds }}s</td></tr>
+        </table>
+
+        <div class="mt-3">
+            {% if job.status == 'queued' %}
+            <form method="POST" action="{{ url_for('jobs.cancel', job_id=job.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-warning">Cancel Job</button>
+            </form>
+            {% endif %}
+            {% if job.output_path %}
+            <a href="{{ url_for('jobs.download', job_id=job.id) }}" class="btn btn-outline-primary">Download Output</a>
+            {% endif %}
+            <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
+        </div>
+    </div>
+</div>
+
+{% if job.error_message %}
+<div class="alert alert-danger mt-3">
+    <strong>Error:</strong> {{ job.error_message }}
+</div>
+{% endif %}
+
+{% if job.output_path %}
+<h4 class="mt-4">Session Log</h4>
+<pre class="log-viewer bg-dark text-light p-3 rounded"><code>{% include 'jobs/output.txt' ignore missing %}</code></pre>
+{% endif %}
+{% endblock %}

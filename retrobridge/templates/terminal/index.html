@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Terminal{% endblock %}
+{% block content %}
+<h2>Interactive Terminal</h2>
+<p>Select a device to open an interactive terminal session.</p>
+
+{% if active_session %}
+<div class="alert alert-info">
+    You have an active session on <strong>{{ active_session.device.display_name or active_session.device.name }}</strong>
+    (connected {{ active_session.connected_at.strftime('%Y-%m-%d %H:%M') if active_session.connected_at else '' }}).
+    <a href="{{ url_for('terminal.session', device_id=active_session.device_id) }}" class="btn btn-sm btn-primary">Resume</a>
+</div>
+{% endif %}
+
+<div class="row">
+    {% for d in devices %}
+    <div class="col-md-6 col-lg-4 mb-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">{{ d.display_name }}</h5>
+                <p class="card-text">
+                    {% if d.available_ports > 0 %}
+                    <span class="badge bg-success">{{ d.available_ports }} port{{ 's' if d.available_ports != 1 else '' }} available</span>
+                    {% else %}
+                    <span class="badge bg-danger">All ports in use</span>
+                    {% endif %}
+                    ({{ d.available_ports }}/{{ d.total_ports }})
+                </p>
+                <a href="{{ url_for('terminal.session', device_id=d.id) }}"
+                   class="btn btn-{{ 'primary' if d.available_ports > 0 else 'secondary' }} btn-sm"
+                   {{ 'disabled' if d.available_ports == 0 else '' }}>
+                    Connect
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

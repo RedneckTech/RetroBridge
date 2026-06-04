@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Admin - Devices{% endblock %}
+{% block content %}
+<h2>Device Management</h2>
+
+<h4>Add Device</h4>
+<div class="row mb-4">
+    <div class="col-md-6">
+        <form method="POST">
+            {{ form.hidden_tag() }}
+            <div class="mb-3">
+                {{ form.name.label(class="form-label") }}
+                {{ form.name(class="form-control") }}
+            </div>
+            <div class="mb-3">
+                {{ form.display_name.label(class="form-label") }}
+                {{ form.display_name(class="form-control") }}
+            </div>
+            {{ form.submit(class="btn btn-primary") }}
+        </form>
+    </div>
+</div>
+
+<h4>Existing Devices</h4>
+{% for device in devices %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>{{ device.display_name or device.name }}</strong>
+        <span class="badge bg-{{ 'success' if device.is_enabled else 'secondary' }}">
+            {{ 'Enabled' if device.is_enabled else 'Disabled' }}
+        </span>
+    </div>
+    <div class="card-body">
+        <h6>Ports</h6>
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Label</th>
+                    <th>Path</th>
+                    <th>Purpose</th>
+                    <th>Baud</th>
+                    <th>Parity</th>
+                    <th>Flow</th>
+                    <th>Enabled</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for port in device.ports %}
+                <tr>
+                    <td>{{ port.port_label }}</td>
+                    <td><code>{{ port.dev_path }}</code></td>
+                    <td><span class="badge bg-{{ 'info' if port.purpose == 'interactive' else 'primary' }}">{{ port.purpose }}</span></td>
+                    <td>{{ port.baud }}</td>
+                    <td>{{ port.parity }}</td>
+                    <td>{{ port.flow_control }}</td>
+                    <td><span class="badge bg-{{ 'success' if port.is_enabled else 'secondary' }}">{{ 'Yes' if port.is_enabled else 'No' }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}

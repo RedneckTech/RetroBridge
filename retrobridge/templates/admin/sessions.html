@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Admin - Sessions{% endblock %}
+{% block content %}
+<h2>Terminal Sessions</h2>
+
+<h4>Active Sessions</h4>
+{% if active_sessions %}
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Device</th>
+                <th>Port</th>
+                <th>Connected</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in active_sessions %}
+            <tr>
+                <td>{{ s.id }}</td>
+                <td>{{ s.user.username if s.user else 'N/A' }}</td>
+                <td>{{ s.device.display_name or s.device.name if s.device else 'N/A' }}</td>
+                <td>{{ s.port.port_label if s.port else 'N/A' }}</td>
+                <td>{{ s.connected_at.strftime('%Y-%m-%d %H:%M') if s.connected_at }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('api.disconnect_session', session_id=s.id) }}" class="d-inline"
+                          onsubmit="return confirm('Force disconnect this session?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-danger">Force Disconnect</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No active terminal sessions.</p>
+{% endif %}
+
+<h4 class="mt-4">Session History</h4>
+{% if history %}
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Device</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in history %}
+            <tr>
+                <td>{{ s.id }}</td>
+                <td>{{ s.user.username if s.user else 'N/A' }}</td>
+                <td>{{ s.device.display_name or s.device.name if s.device else 'N/A' }}</td>
+                <td><span class="badge bg-secondary">{{ s.status }}</span></td>
+                <td>{{ s.duration_seconds }}s</td>
+                <td>{{ s.disconnect_reason or 'N/A' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No session history.</p>
+{% endif %}
+{% endblock %}

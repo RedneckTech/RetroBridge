@@ -1,0 +1,30 @@
+/* RetroBridge custom styles */
+
+.log-viewer {
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+#terminal-container .xterm {
+    height: 100%;
+}
+
+.status-badge-queued { background-color: #ffc107; color: #000; }
+.status-badge-running { background-color: #0dcaf0; }
+.status-badge-completed { background-color: #198754; }
+.status-badge-failed { background-color: #dc3545; }
+.status-badge-canceled { background-color: #6c757d; }
+
+.card-stats {
+    transition: transform 0.2s;
+}
+.card-stats:hover {
+    transform: translateY(-2px);
+}
+
+.job-table tr:hover {
+    cursor: pointer;
+}
