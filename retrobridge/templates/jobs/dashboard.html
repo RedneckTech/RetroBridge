@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h2>Dashboard</h2>
+
+<div class="row mb-4">
+    {% for d in devices %}
+    <div class="col-md-6 col-lg-4 mb-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">{{ d.display_name or d.name }}</h5>
+                <p class="card-text">
+                    <span class="badge bg-{{ 'success' if d.is_enabled else 'secondary' }}">
+                        {{ 'Enabled' if d.is_enabled else 'Disabled' }}
+                    </span>
+                    {% set queue_count = d.jobs | selectattr('status', 'equalto', 'queued') | list | length %}
+                    {% set running_count = d.jobs | selectattr('status', 'equalto', 'running') | list | length %}
+                    {% if queue_count > 0 %}
+                    <span class="badge bg-warning text-dark">{{ queue_count }} queued</span>
+                    {% endif %}
+                    {% if running_count > 0 %}
+                    <span class="badge bg-info">{{ running_count }} running</span>
+                    {% endif %}
+                </p>
+                <a href="{{ url_for('jobs.new') }}" class="btn btn-sm btn-outline-primary">Submit Job</a>
+                <a href="{{ url_for('terminal.index') }}" class="btn btn-sm btn-outline-secondary">Open Terminal</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<h3>Your Jobs</h3>
+{% if jobs %}
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Filename</th>
+                <th>Device</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td>{{ job.id }}</td>
+                <td>{{ job.original_filename }}</td>
+                <td>{{ job.device.name if job.device else 'N/A' }}</td>
+                <td>
+                    {% if job.status == 'queued' %}
+                    <span class="badge bg-warning text-dark">Queued</span>
+                    {% elif job.status == 'running' %}
+                    <span class="badge bg-info">Running</span>
+                    {% elif job.status == 'completed' %}
+                    <span class="badge bg-success">Completed</span>
+                    {% elif job.status == 'failed' %}
+                    <span class="badge bg-danger">Failed</span>
+                    {% elif job.status == 'canceled' %}
+                    <span class="badge bg-secondary">Canceled</span>
+                    {% endif %}
+                </td>
+                <td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '' }}</td>
+                <td>
+                    <a href="{{ url_for('jobs.detail', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-muted">No jobs yet. <a href="{{ url_for('jobs.new') }}">Submit your first job</a>.</p>
+{% endif %}
+{% endblock %}

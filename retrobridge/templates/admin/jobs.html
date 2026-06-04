@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Admin - Jobs{% endblock %}
+{% block content %}
+<h2>Job Administration</h2>
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Device</th>
+                <th>Filename</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td>{{ job.id }}</td>
+                <td>{{ job.user.username if job.user else 'N/A' }}</td>
+                <td>{{ job.device.name if job.device else 'N/A' }}</td>
+                <td>{{ job.original_filename }}</td>
+                <td>
+                    {% if job.status == 'queued' %}
+                    <span class="badge bg-warning text-dark">Queued</span>
+                    {% elif job.status == 'running' %}
+                    <span class="badge bg-info">Running</span>
+                    {% elif job.status == 'completed' %}
+                    <span class="badge bg-success">Completed</span>
+                    {% elif job.status == 'failed' %}
+                    <span class="badge bg-danger">Failed</span>
+                    {% elif job.status == 'canceled' %}
+                    <span class="badge bg-secondary">Canceled</span>
+                    {% endif %}
+                </td>
+                <td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at }}</td>
+                <td>
+                    <a href="{{ url_for('jobs.detail', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+                    {% if job.status in ('queued', 'running') %}
+                    <form method="POST" action="{{ url_for('api.admin_cancel_job', job_id=job.id) }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-danger">Cancel</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

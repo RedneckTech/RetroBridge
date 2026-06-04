@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Admin - Settings{% endblock %}
+{% block content %}
+<h2>Global Settings</h2>
+<div class="row">
+    <div class="col-md-6">
+        <form method="POST">
+            {{ form.hidden_tag() }}
+            {% for s in settings %}
+            <div class="mb-3">
+                <label class="form-label">{{ s.key }}</label>
+                <input type="text" class="form-control" name="{{ s.key }}" value="{{ s.value }}">
+                {% if s.description %}
+                <div class="form-text">{{ s.description }}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {{ form.submit(class="btn btn-primary") }}
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}404 Not Found{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+    <h1 class="display-1 text-muted">404</h1>
+    <p class="lead">The page you are looking for does not exist.</p>
+    <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-primary">Go to Dashboard</a>
+</div>
+{% endblock %}
