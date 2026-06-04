@@ -29,9 +29,14 @@ def create_app(config=None):
     from retrobridge.models import Base as _Base
     from sqlalchemy import create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
+    from sqlalchemy.pool import NullPool, StaticPool
+
+    poolclass_name = app.config.get('SQLALCHEMY_ENGINE_POOLCLASS', 'NullPool')
+    poolclass = {'NullPool': NullPool, 'StaticPool': StaticPool}.get(poolclass_name, NullPool)
 
     engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'],
-                           connect_args=app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('connect_args', {}))
+                           connect_args=app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('connect_args', {}),
+                           poolclass=poolclass)
     session_factory = sessionmaker(bind=engine)
     app.db_session = scoped_session(session_factory)
     app.db_engine = engine
@@ -44,6 +49,14 @@ def create_app(config=None):
 
     socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet'))
     csrf.init_app(app)
+
+    @app.route('/')
+    def landing():
+        from flask import render_template, redirect, url_for
+        from flask_login import current_user
+        if current_user.is_authenticated:
+            return redirect(url_for('jobs.dashboard'))
+        return render_template('landing.html')
 
     from retrobridge.auth.routes import auth_bp
     from retrobridge.jobs.routes import jobs_bp
@@ -67,6 +80,10 @@ def create_app(config=None):
     register_cli_commands(app)
 
     register_error_handlers(app)
+
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        app.db_session.remove()
 
     os.makedirs(app.instance_path, exist_ok=True)
     os.makedirs(app.config.get('UPLOAD_DIR', 'uploads'), exist_ok=True)

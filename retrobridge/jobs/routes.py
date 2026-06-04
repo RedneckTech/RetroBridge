@@ -7,7 +7,7 @@ from retrobridge.jobs.forms import JobUploadForm
 from retrobridge.models import Device, Job
 
 
-@jobs_bp.route('/')
+@jobs_bp.route('/dashboard')
 @login_required
 def dashboard():
     from flask import current_app

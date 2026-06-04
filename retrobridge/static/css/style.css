@@ -12,6 +12,20 @@
     height: 100%;
 }
 
+.avatar-nav {
+    width: 28px;
+    height: 28px;
+    object-fit: cover;
+    border: 1px solid rgba(255,255,255,0.3);
+}
+
+.avatar-profile {
+    transition: transform 0.2s;
+}
+.avatar-profile:hover {
+    transform: scale(1.05);
+}
+
 .status-badge-queued { background-color: #ffc107; color: #000; }
 .status-badge-running { background-color: #0dcaf0; }
 .status-badge-completed { background-color: #198754; }

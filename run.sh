@@ -30,10 +30,10 @@ PORT="${FLASK_PORT:-5000}"
 
 echo ""
 echo "  ┌─────────────────────────────────────────────────────────────┐"
-echo "  │  R E T R O B R I D G E   B B S   v0.1.0                    │"
+echo "  │                R E T R O B R I D G E v0.1.0                 │"
 echo "  │  ────────────────────────────────────────────────────────   │"
-echo "  │  Server:  http://${HOST}:${PORT}                              │"
-echo "  │  Ctrl+C  to stop                                           │"
+echo "  │  Server:  http://${HOST}:${PORT}                            │"
+echo "  │  Ctrl+C  to stop                                            │"
 echo "  └─────────────────────────────────────────────────────────────┘"
 echo ""
 

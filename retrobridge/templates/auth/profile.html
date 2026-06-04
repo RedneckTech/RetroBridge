@@ -1,40 +1,89 @@
 {% extends "base.html" %}
 {% block title %}Profile{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6 col-lg-4">
-        <h2 class="mb-4">Edit Profile</h2>
-        <form method="POST">
-            {{ form.hidden_tag() }}
-            <div class="mb-3">
-                {{ form.email.label(class="form-label") }}
-                {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
-                {% for error in form.email.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+
+        <div class="row mb-4">
+            <div class="col-md-4 text-center">
+                <img src="{{ current_user.avatar_url(size=160) }}" alt="Avatar"
+                     class="rounded-circle mb-3 border border-3 border-secondary"
+                     style="width: 140px; height: 140px; object-fit: cover;">
+                <h5>{{ current_user.full_name or current_user.username }}</h5>
+                <p class="text-muted small">{{ current_user.email }}</p>
+                <p class="text-muted small">Member since {{ current_user.created_at.strftime('%B %Y') if current_user.created_at else 'N/A' }}</p>
+                {% if current_user.bio %}
+                <p class="fst-italic text-muted small">"{{ current_user.bio }}"</p>
+                {% endif %}
             </div>
-            <div class="mb-3">
-                {{ form.full_name.label(class="form-label") }}
-                {{ form.full_name(class="form-control") }}
+            <div class="col-md-8">
+                <h2 class="mb-4">Edit Profile</h2>
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        <label class="form-label">Avatar</label>
+                        <p class="text-muted small">Avatars are provided by <a href="https://gravatar.com" target="_blank">Gravatar</a> based on your email address.</p>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.email.label(class="form-label") }}
+                        {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
+                        {% for error in form.email.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.full_name.label(class="form-label") }}
+                        {{ form.full_name(class="form-control") }}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.bio.label(class="form-label") }}
+                        {{ form.bio(class="form-control", rows=3, placeholder="Tell the community about yourself...") }}
+                        {% for error in form.bio.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+
+                    <hr>
+                    <h5>Terminal Preferences</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.terminal_font_size.label(class="form-label") }}
+                            {{ form.terminal_font_size(class="form-control" + (" is-invalid" if form.terminal_font_size.errors else ""), min=10, max=24) }}
+                            {% for error in form.terminal_font_size.errors %}
+                            <div class="invalid-feedback">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            {{ form.terminal_color_scheme.label(class="form-label") }}
+                            {{ form.terminal_color_scheme(class="form-select" + (" is-invalid" if form.terminal_color_scheme.errors else "")) }}
+                            {% for error in form.terminal_color_scheme.errors %}
+                            <div class="invalid-feedback">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <hr>
+                    <h5>Change Password</h5>
+                    <p class="text-muted small">Leave blank to keep your current password.</p>
+                    <div class="mb-3">
+                        {{ form.new_password.label(class="form-label") }}
+                        {{ form.new_password(class="form-control" + (" is-invalid" if form.new_password.errors else "")) }}
+                        {% for error in form.new_password.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.confirm_password.label(class="form-label") }}
+                        {{ form.confirm_password(class="form-control" + (" is-invalid" if form.confirm_password.errors else "")) }}
+                        {% for error in form.confirm_password.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    {{ form.submit(class="btn btn-primary") }}
+                </form>
             </div>
-            <hr>
-            <p class="text-muted small">Leave password fields blank to keep your current password.</p>
-            <div class="mb-3">
-                {{ form.new_password.label(class="form-label") }}
-                {{ form.new_password(class="form-control" + (" is-invalid" if form.new_password.errors else "")) }}
-                {% for error in form.new_password.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
-            </div>
-            <div class="mb-3">
-                {{ form.confirm_password.label(class="form-label") }}
-                {{ form.confirm_password(class="form-control" + (" is-invalid" if form.confirm_password.errors else "")) }}
-                {% for error in form.confirm_password.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
-            </div>
-            {{ form.submit(class="btn btn-primary w-100") }}
-        </form>
+        </div>
+
     </div>
 </div>
 {% endblock %}

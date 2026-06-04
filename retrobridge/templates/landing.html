@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}RetroBridge — Vintage Computing{% endblock %}
+{% block content %}
+
+<div class="px-4 py-5 my-5 text-center">
+    <h1 class="display-4 fw-bold">RetroBridge</h1>
+    <p class="lead mb-4">Bridge modern web workflows to vintage minicomputers over RS-232</p>
+    <p class="col-lg-6 mx-auto text-muted">
+        Submit programs for batch execution or open interactive terminal sessions
+        on real vintage hardware — all from your browser.
+    </p>
+    <div class="d-grid gap-2 d-sm-flex justify-content-sm-center mt-4">
+        <a href="{{ url_for('auth.login') }}" class="btn btn-primary btn-lg px-4 gap-3">Log In</a>
+        <a href="{{ url_for('auth.register') }}" class="btn btn-outline-secondary btn-lg px-4">Register</a>
+    </div>
+</div>
+
+<div class="row g-4 mb-5">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-6 mb-3">&#128295;</div>
+                <h5 class="card-title">Job Queue</h5>
+                <p class="card-text text-muted small">
+                    Upload your programs and let background workers handle
+                    the serial transfer via XMODEM. Track status, view
+                    output logs, and download session captures.
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-6 mb-3">&#9000;</div>
+                <h5 class="card-title">Live Terminal</h5>
+                <p class="card-text text-muted small">
+                    Open a real-time interactive terminal session on a
+                    vintage machine via WebSocket. Type commands and see
+                    output as if you were sitting at the physical console.
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-6 mb-3">&#9881;</div>
+                <h5 class="card-title">PTY Simulation</h5>
+                <p class="card-text text-muted small">
+                    Develop and test without hardware using built-in
+                    pseudo-terminal simulation for both job processing
+                    and interactive terminal sessions.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<hr class="my-5">
+
+<h3 class="text-center mb-4">Supported Hardware</h3>
+<div class="row g-4 mb-5">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Centurion CPU-6</h5>
+                <p class="card-text text-muted small">
+                    Multi-user, multi-port minicomputer. Job ports handle
+                    automated program transfers; interactive ports provide
+                    real-time terminal sessions.
+                </p>
+                <span class="badge bg-primary">RS-232</span>
+                <span class="badge bg-info">XMODEM</span>
+                <span class="badge bg-secondary">9600 Baud</span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">DEC PDP-11/44</h5>
+                <p class="card-text text-muted small">
+                    Classic 16-bit minicomputer. Supports the same job
+                    queue and interactive terminal workflow with
+                    configurable serial parameters per port.
+                </p>
+                <span class="badge bg-primary">RS-232</span>
+                <span class="badge bg-info">XMODEM</span>
+                <span class="badge bg-secondary">9600 Baud</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="text-center my-5">
+    <p class="text-muted">Ready to get started?</p>
+    <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg">Create an Account</a>
+</div>
+
+{% endblock %}
