@@ -53,6 +53,10 @@
 <script src="{{ url_for('static', filename='js/terminal.js') }}"></script>
 <script>
     const deviceId = {{ device.id }};
-    initTerminal(deviceId);
+    const terminalPrefs = {
+        fontSize: {{ terminal_font_size }},
+        colorScheme: "{{ terminal_color_scheme }}"
+    };
+    initTerminal(deviceId, terminalPrefs);
 </script>
 {% endblock %}

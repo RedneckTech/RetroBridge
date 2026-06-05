@@ -7,7 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 from retrobridge.auth import auth_bp
 from retrobridge.auth.forms import LoginForm, RegistrationForm, ProfileForm
-from retrobridge.models import LoginAttempt, User
+from retrobridge.models import Job, LoginAttempt, TerminalSession, User
 
 MAX_FAILED_ATTEMPTS = 5
 THROTTLE_WINDOW_MINUTES = 15
@@ -115,6 +115,8 @@ def logout():
 @auth_bp.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
+    from flask import current_app
+
     form = ProfileForm(obj=current_user)
 
     if request.method == 'GET':
@@ -128,7 +130,6 @@ def profile():
         form.terminal_color_scheme.data = prefs.get('terminal_color_scheme', 'dark')
 
     if form.validate_on_submit():
-        from flask import current_app
         current_user.email = form.email.data
         current_user.full_name = form.full_name.data
         current_user.bio = form.bio.data
@@ -142,4 +143,50 @@ def profile():
         flash('Profile updated.', 'success')
         return redirect(url_for('auth.profile'))
 
-    return render_template('auth/profile.html', form=form)
+    # Stats
+    total_jobs = current_app.db_session.query(Job).filter_by(
+        user_id=current_user.id).count()
+    queued_count = current_app.db_session.query(Job).filter_by(
+        user_id=current_user.id, status='queued').count()
+    running_count = current_app.db_session.query(Job).filter_by(
+        user_id=current_user.id, status='running').count()
+    completed_count = current_app.db_session.query(Job).filter_by(
+        user_id=current_user.id, status='completed').count()
+    total_sessions = current_app.db_session.query(TerminalSession).filter_by(
+        user_id=current_user.id).count()
+    active_sessions = current_app.db_session.query(TerminalSession).filter_by(
+        user_id=current_user.id, status='active').count()
+
+    recent_jobs = current_app.db_session.query(Job).filter_by(
+        user_id=current_user.id).order_by(Job.created_at.desc()).limit(5).all()
+    recent_sessions = current_app.db_session.query(TerminalSession).filter_by(
+        user_id=current_user.id).order_by(
+        TerminalSession.connected_at.desc()).limit(5).all()
+
+    stats = {
+        'total_jobs': total_jobs,
+        'queued_count': queued_count,
+        'running_count': running_count,
+        'completed_count': completed_count,
+        'total_sessions': total_sessions,
+        'active_sessions': active_sessions,
+        'max_queued': current_user.max_queued_jobs,
+        'max_sessions': current_user.max_terminal_sessions,
+    }
+
+    return render_template('auth/profile.html', form=form, stats=stats,
+                           recent_jobs=recent_jobs,
+                           recent_sessions=recent_sessions)
+
+
+@auth_bp.route('/delete-account', methods=['POST'])
+@login_required
+def delete_account():
+    from flask import current_app
+    user = current_app.db_session.get(User, current_user.id)
+    if user:
+        logout_user()
+        current_app.db_session.delete(user)
+        current_app.db_session.commit()
+        flash('Your account has been deleted.', 'info')
+    return redirect(url_for('auth.login'))
