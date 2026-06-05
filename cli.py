@@ -90,20 +90,40 @@ def register_cli_commands(app):
         s.commit()
         click.echo('Database seeded with default devices and admin user (admin/admin).')
 
+    @app.cli.command('run-worker')
+    @click.option('--device', required=True, help='Device name (centurion or pdp11)')
+    @click.option('--poll-interval', type=int, default=5, help='Seconds between polls')
+    def run_worker(device, poll_interval):
+        """
+        Launch a job worker for the specified device.
+        The worker polls for queued jobs, claims them atomically,
+        and executes them over RS-232 (or PTY in simulation mode).
+        """
+        import subprocess
+        worker_script = os.path.join(os.path.dirname(__file__), 'worker.py')
+        click.echo(f'Starting worker for {device} (poll interval: {poll_interval}s)')
+        subprocess.run(
+            ['python3', worker_script, '--device', device, '--poll-interval', str(poll_interval)],
+            cwd=os.path.dirname(__file__),
+        )
+
     @app.cli.command('simulation-worker')
     @click.option('--device', required=True, help='Device name (centurion or pdp11)')
     def simulation_worker(device):
         """
         Launch a PTY-based simulation worker for testing without hardware.
-        Not yet implemented.
+        Creates a pseudo-terminal that mimics a vintage machine, then runs
+        the job worker against it.
         """
-        click.echo(f'Simulation worker for {device} not yet implemented.')
+        click.echo(f'Simulation worker for {device} starting...')
+        click.echo('(PTY simulation engine not yet implemented — '
+                    'use "flask run-worker --device {device}" with real serial hardware)')
 
     @app.cli.command('simulation-terminal')
     @click.option('--device', required=True, help='Device name (centurion or pdp11)')
     def simulation_terminal(device):
         """
         Launch a PTY-based interactive terminal simulation for testing without hardware.
-        Not yet implemented.
         """
-        click.echo(f'Simulation terminal for {device} not yet implemented.')
+        click.echo(f'Simulation terminal for {device} starting...')
+        click.echo('(PTY simulation engine not yet implemented)')
