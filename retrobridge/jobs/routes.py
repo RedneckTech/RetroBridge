@@ -51,6 +51,7 @@ def new():
             device_id=device_id,
             original_filename=filename,
             status='queued',
+            priority=form.priority.data or 0,
         )
         current_app.db_session.add(job)
         current_app.db_session.flush()

@@ -313,18 +313,15 @@ def create_job_simulation(device_name='centurion'):
             os.write(master_fd, b'\r\nCENTURION CPU-6 BOOT LOADER v2.1\r\n')
             os.write(master_fd, b'READY\r\n')
 
-            # Phase 1: Listen for pre-transfer commands
             start_time = time.time()
-            xmodem_started = False
 
             while not stop_event.is_set():
-                rfds, _, _ = select.select([master_fd], [], [], 0.5)
-                elapsed = time.time() - start_time
-
-                if elapsed > 60:
+                if time.time() - start_time > 60:
                     os.write(master_fd, b'\r\nTIMEOUT - No transfer initiated\r\n')
                     break
 
+                # Wait for activity
+                rfds, _, _ = select.select([master_fd], [], [], 0.5)
                 if not rfds:
                     continue
 
@@ -334,33 +331,43 @@ def create_job_simulation(device_name='centurion'):
                     break
 
                 if not chunk:
+                    continue
+
+                # Check for CR to initiate XMODEM receive
+                if b'\r' in chunk or b'\n' in chunk:
+                    # XMODEM receive loop: send C, wait for blocks, ACK everything
+                    first = True
+                    while not stop_event.is_set():
+                        if first:
+                            os.write(master_fd, b'C')
+                            first = False
+
+                        rfds, _, _ = select.select([master_fd], [], [], 3.0)
+                        if not rfds:
+                            continue
+
+                        try:
+                            chunk = os.read(master_fd, 1024)
+                        except OSError:
+                            return
+                        if not chunk:
+                            continue
+
+                        b0 = chunk[0]
+                        if b0 == 0x01:  # SOH
+                            os.write(master_fd, b'\x06')
+                        elif b0 == 0x04:  # EOT
+                            os.write(master_fd, b'\x06')
+                            os.write(master_fd, b'\r\nPROGRAM LOADED. EXECUTING...\r\n'.encode())
+                            time.sleep(0.5)
+                            os.write(master_fd, b'Hello, World!\r\n'.encode())
+                            os.write(master_fd, b'Execution complete. Return code: 0\r\n'.encode())
+                            time.sleep(1)
+                            # Go back to idle for next job
+                            os.write(master_fd, b'\r\nREADY\r\n'.encode())
+                            start_time = time.time()
+                            break  # Exit XMODEM loop, back to idle
                     break
-
-                decoded = chunk.decode('ascii', errors='replace')
-
-                if not xmodem_started:
-                    # Wait for CR to initiate XMODEM
-                    if '\r' in decoded or '\n' in decoded:
-                        time.sleep(0.5)
-                        # Send XMODEM CRC start character
-                        os.write(master_fd, b'C')
-                        xmodem_started = True
-                else:
-                    # Received an XMODEM block — pretend to process it
-                    if len(chunk) >= 3 and chunk[0] == 0x01:
-                        # SOH header — XMODEM block
-                        time.sleep(0.05)
-                        os.write(master_fd, b'\x06')  # ACK
-                    elif len(chunk) >= 3 and chunk[0] == 0x04:
-                        # EOT — transfer complete
-                        os.write(master_fd, b'\x06')
-                        time.sleep(0.3)
-                        os.write(master_fd, b'\r\nPROGRAM LOADED. EXECUTING...\r\n'.encode())
-                        time.sleep(0.5)
-                        os.write(master_fd, b'Hello, World!\r\n'.encode())
-                        os.write(master_fd, b'Execution complete. Return code: 0\r\n'.encode())
-                        time.sleep(1)
-                        break
         except Exception:
             pass
         finally:

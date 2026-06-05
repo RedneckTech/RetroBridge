@@ -97,6 +97,53 @@ def get_serial_params(port):
     }
 
 
+def _manual_xmodem_send(ser, stream, _log_line):
+    """Minimal XMODEM sender as fallback."""
+    file_size = stream.seek(0, 2)
+    stream.seek(0)
+
+    # Wait for 'C' (CRC mode)
+    ser.timeout = 10
+    c = ser.read(1)
+    if c != b'C':
+        _log_line('XMODEM handshake failed: no C received', 'SYS')
+        return False
+
+    block_num = 1
+    while True:
+        data = stream.read(128)
+        if not data:
+            break
+        if len(data) < 128:
+            data = data.ljust(128, b'\x1a')
+
+        blk = bytes([block_num])
+        blk_cmpl = bytes([255 - block_num])
+        block = b'\x01' + blk + blk_cmpl + data
+        cksum = sum(data) % 256
+        block += bytes([cksum])
+
+        ser.write(block)
+        ser.timeout = 5
+        ack = ser.read(1)
+        if ack != b'\x06':
+            _log_line(f'XMODEM: expected ACK, got {repr(ack)}', 'SYS')
+            return False
+
+        block_num = (block_num + 1) % 256
+
+    # Send EOT
+    ser.write(b'\x04')
+    ser.timeout = 5
+    ack = ser.read(1)
+    if ack == b'\x06':
+        _log_line('XMODEM transfer complete', 'SYS')
+        return True
+
+    _log_line(f'XMODEM: expected ACK after EOT, got {repr(ack)}', 'SYS')
+    return False
+
+
 def claim_job(session: Session, device_name: str) -> Job | None:
     device = session.query(Device).filter_by(name=device_name, is_enabled=True).first()
     if not device:
@@ -190,13 +237,13 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
 
             _log_line(f'Job #{job.id} started on {port.dev_path}', 'SYS')
 
-            # Drain any initial data
+            # Drain any initial data before pre-transfer
             time.sleep(0.2)
             while ser.in_waiting:
                 data = ser.read(ser.in_waiting)
                 _log_line(data.decode('utf-8', errors='replace'), 'RX')
 
-            # Execute pre-transfer commands
+            # Execute pre-transfer commands (no drain between cmd and XMODEM)
             pre_cmds = []
             if port.pre_transfer_cmds:
                 try:
@@ -208,26 +255,24 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
                 logger.info(f'Sending pre-transfer command: {repr(cmd)}')
                 ser.write(cmd.encode('utf-8', errors='replace'))
                 _log_line(cmd, 'TX')
-                time.sleep(0.5)
-                while ser.in_waiting:
-                    data = ser.read(ser.in_waiting)
-                    _log_line(data.decode('utf-8', errors='replace'), 'RX')
 
-            # Transfer file via XMODEM
+            # Transfer file via XMODEM (library first, manual fallback)
+            time.sleep(0.3)
             logger.info(f'Starting XMODEM transfer of {upload_file}')
             _log_line(f'Starting XMODEM transfer: {job.original_filename}', 'SYS')
 
             with open(upload_file, 'rb') as f:
-                def getc(size, timeout=1):
-                    ser.timeout = timeout
-                    return ser.read(size) or None
-
-                def putc(data, timeout=1):
-                    ser.timeout = timeout
-                    return ser.write(data)
-
-                modem = XMODEM1k(getc, putc)
-                success = modem.send(f, retrans=16)
+                success = _manual_xmodem_send(ser, f, _log_line)
+                if not success:
+                    f.seek(0)
+                    def getc(size, timeout=1):
+                        ser.timeout = timeout
+                        return ser.read(size) or b''
+                    def putc(data, timeout=1):
+                        ser.timeout = timeout
+                        return ser.write(data)
+                    modem = XMODEM1k(getc, putc)
+                    success = modem.send(f, retry=8)
 
             if not success:
                 logger.error('XMODEM transfer failed')
@@ -238,7 +283,6 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
                 return False
 
             logger.info('XMODEM transfer complete')
-            _log_line('XMODEM transfer complete', 'SYS')
 
             # Execute post-transfer commands
             post_cmds = []
@@ -269,16 +313,24 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
                     _log_line(f'Maximum runtime ({max_runtime}s) reached', 'SYS')
                     break
 
-                if ser.in_waiting:
-                    data = ser.read(ser.in_waiting)
-                    decoded = data.decode('utf-8', errors='replace')
-                    _log_line(decoded, 'RX')
-                    last_activity = time.time()
-                else:
-                    time.sleep(0.1)
-                    if time.time() - last_activity > idle_timeout:
-                        _log_line(f'Idle timeout ({idle_timeout}s) reached', 'SYS')
-                        break
+                try:
+                    if ser.in_waiting:
+                        try:
+                            data = ser.read(ser.in_waiting)
+                        except SerialException:
+                            data = None
+                        if data:
+                            decoded = data.decode('utf-8', errors='replace')
+                            _log_line(decoded, 'RX')
+                            last_activity = time.time()
+                    else:
+                        time.sleep(0.1)
+                        if time.time() - last_activity > idle_timeout:
+                            _log_line(f'Idle timeout ({idle_timeout}s) reached', 'SYS')
+                            break
+                except (OSError, SerialException):
+                    _log_line('PTY closed — output capture complete', 'SYS')
+                    break
 
             job.status = 'completed'
             job.finished_at = datetime.now(timezone.utc)
