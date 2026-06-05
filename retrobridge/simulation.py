@@ -17,12 +17,15 @@ Terminal Simulation:
   - Supports rudimentary line editing (backspace)
 """
 
+import logging
 import os
 import pty
 import select
 import termios
 import threading
 import time
+
+logger = logging.getLogger(__name__)
 
 # Command responses for simulated terminal sessions
 TERMINAL_COMMANDS = {
@@ -261,6 +264,7 @@ def create_terminal_simulation(device_name='centurion'):
                             buffer += cb
                             os.write(master_fd, cb)
         except Exception:
+            logger.debug('Terminal simulation exception', exc_info=True)
             pass
         finally:
             try:
@@ -358,17 +362,19 @@ def create_job_simulation(device_name='centurion'):
                             os.write(master_fd, b'\x06')
                         elif b0 == 0x04:  # EOT
                             os.write(master_fd, b'\x06')
-                            os.write(master_fd, b'\r\nPROGRAM LOADED. EXECUTING...\r\n'.encode())
+                            os.write(master_fd, b'\r\nPROGRAM LOADED. EXECUTING...\r\n')
                             time.sleep(0.5)
-                            os.write(master_fd, b'Hello, World!\r\n'.encode())
-                            os.write(master_fd, b'Execution complete. Return code: 0\r\n'.encode())
+                            os.write(master_fd, b'Hello, World!\r\n')
+                            os.write(master_fd, b'Execution complete. Return code: 0\r\n')
                             time.sleep(1)
                             # Go back to idle for next job
                             os.write(master_fd, b'\r\nREADY\r\n'.encode())
                             start_time = time.time()
                             break  # Exit XMODEM loop, back to idle
-                    break
+                    # Continue outer loop to stay alive for next job
+                    continue
         except Exception:
+            logger.debug('Job simulation exception', exc_info=True)
             pass
         finally:
             try:
