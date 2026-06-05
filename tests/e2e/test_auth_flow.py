@@ -28,7 +28,7 @@ def client(app):
 
 
 def _register(client, username='newuser', email='newuser@example.com',
-              full_name='New User', password='securepass123'):
+              full_name='New User', password='SecurePass1'):
     return client.post('/auth/register', data={
         'username': username,
         'email': email,
@@ -38,7 +38,7 @@ def _register(client, username='newuser', email='newuser@example.com',
     }, follow_redirects=True)
 
 
-def _login(client, username='newuser', password='securepass123'):
+def _login(client, username='newuser', password='SecurePass1'):
     return client.post('/auth/login', data={
         'username': username,
         'password': password,

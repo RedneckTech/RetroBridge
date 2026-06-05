@@ -1,6 +1,23 @@
+import re
+
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, BooleanField, SubmitField, TextAreaField, IntegerField, SelectField
-from wtforms.validators import DataRequired, Length, Email, EqualTo, Optional, NumberRange
+from wtforms import (
+    BooleanField, IntegerField, PasswordField, SelectField, StringField,
+    SubmitField, TextAreaField,
+)
+from wtforms.validators import (
+    DataRequired, Email, EqualTo, Length, NumberRange, Optional, ValidationError,
+)
+
+
+def password_complexity(form, field):
+    password = field.data or ''
+    if not password:
+        return
+    if not re.search(r'[A-Z]', password):
+        raise ValidationError('Password must contain at least one uppercase letter.')
+    if not re.search(r'[0-9]', password):
+        raise ValidationError('Password must contain at least one digit.')
 
 
 class LoginForm(FlaskForm):
@@ -17,6 +34,7 @@ class RegistrationForm(FlaskForm):
     password = PasswordField('Password', validators=[
         DataRequired(),
         Length(min=8, message='Password must be at least 8 characters.'),
+        password_complexity,
     ])
     confirm_password = PasswordField('Confirm Password', validators=[
         DataRequired(),
@@ -36,7 +54,11 @@ class ProfileForm(FlaskForm):
         ('light', 'Light (Black on White)'),
         ('cyan', 'Cyan (Cyan on Black)'),
     ], default='dark')
-    new_password = PasswordField('New Password', validators=[Optional(), Length(min=8)])
+    new_password = PasswordField('New Password', validators=[
+        Optional(),
+        Length(min=8, message='Password must be at least 8 characters.'),
+        password_complexity,
+    ])
     confirm_password = PasswordField('Confirm New Password', validators=[
         EqualTo('new_password', message='Passwords must match.'),
     ])
