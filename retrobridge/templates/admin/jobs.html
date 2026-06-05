@@ -2,52 +2,250 @@
 {% block title %}Admin - Jobs{% endblock %}
 {% block content %}
 <h2>Job Administration</h2>
+
+<!-- Status Counts -->
+<div class="row mb-3">
+    {% set all_count = status_counts.values()|sum %}
+    <div class="col-auto">
+        <a href="?{{ 'device_id=' + device_id + '&' if device_id }}{{ 'search=' + search + '&' if search }}"
+           class="text-decoration-none">
+            <div class="border rounded p-2 text-center {{ 'bg-primary text-white' if not status else '' }}"
+                 style="min-width:80px">
+                <div class="fs-5">{{ all_count }}</div>
+                <small>All</small>
+            </div>
+        </a>
+    </div>
+    {% for s, label, color in [('queued','Queued','warning'),('running','Running','info'),('completed','Done','success'),('failed','Failed','danger'),('canceled','Canceled','secondary')] %}
+    <div class="col-auto">
+        <a href="?status={{ s }}{{ '&device_id=' + device_id if device_id }}{{ '&search=' + search if search }}"
+           class="text-decoration-none">
+            <div class="border rounded p-2 text-center {{ 'bg-' + color + ' text-white' if status == s else '' }}"
+                 style="min-width:80px">
+                <div class="fs-5">{{ status_counts.get(s, 0) }}</div>
+                <small>{{ label }}</small>
+            </div>
+        </a>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Filters -->
+<div class="row mb-3 align-items-end">
+    <div class="col-md-4">
+        <form method="GET" class="d-flex">
+            {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+            {% if device_id %}<input type="hidden" name="device_id" value="{{ device_id }}">{% endif %}
+            <input type="search" name="search" class="form-control form-control-sm me-2"
+                   placeholder="Filename or username..." value="{{ search }}">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Search</button>
+            {% if search or status or device_id %}
+            <a href="{{ url_for('admin.jobs') }}" class="btn btn-sm btn-outline-danger ms-1">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+    <div class="col-md-3">
+        <form method="GET" id="deviceFilterForm">
+            {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+            {% if search %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
+            <select name="device_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">All Devices</option>
+                {% for d in devices %}
+                <option value="{{ d.id }}" {{ 'selected' if device_id == d.id|string }}>
+                    {{ d.display_name or d.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+    <div class="col-md-5 text-end">
+        <button class="btn btn-sm btn-outline-danger" id="bulkCancelBtn" disabled
+                onclick="bulkCancel()">
+            Cancel Selected
+        </button>
+    </div>
+</div>
+
+<!-- Bulk Cancel Form -->
+<form method="POST" action="{{ url_for('admin.bulk_cancel_jobs') }}" id="bulkCancelForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div id="bulkJobIds"></div>
+</form>
+
 <div class="table-responsive">
-    <table class="table table-hover">
+    <table class="table table-hover align-middle">
         <thead>
             <tr>
+                <th style="width:30px">
+                    <input type="checkbox" class="form-check-input" id="selectAll"
+                           onchange="toggleAll(this)">
+                </th>
                 <th>ID</th>
                 <th>User</th>
                 <th>Device</th>
                 <th>Filename</th>
+                <th>Pri</th>
                 <th>Status</th>
+                <th>Runtime</th>
                 <th>Created</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for job in jobs %}
-            <tr>
+            <tr data-job-id="{{ job.id }}" class="job-row">
+                <td>
+                    <input type="checkbox" class="form-check-input job-checkbox"
+                           value="{{ job.id }}"
+                           data-cancelable="{{ 'true' if job.status in ('queued','running') else 'false' }}"
+                           onchange="updateBulkBtn()">
+                </td>
                 <td>{{ job.id }}</td>
                 <td>{{ job.user.username if job.user else 'N/A' }}</td>
                 <td>{{ job.device.name if job.device else 'N/A' }}</td>
-                <td>{{ job.original_filename }}</td>
+                <td>
+                    <a href="#" class="toggle-detail text-decoration-none"
+                       data-job-id="{{ job.id }}">
+                        {{ job.original_filename }}
+                    </a>
+                    {% if job.file_size_bytes %}
+                    <br><small class="text-muted">{{ (job.file_size_bytes / 1024)|round(1) }} KB</small>
+                    {% endif %}
+                </td>
+                <td>{{ job.priority }}</td>
                 <td>
                     {% if job.status == 'queued' %}
                     <span class="badge bg-warning text-dark">Queued</span>
                     {% elif job.status == 'running' %}
                     <span class="badge bg-info">Running</span>
                     {% elif job.status == 'completed' %}
-                    <span class="badge bg-success">Completed</span>
+                    <span class="badge bg-success">Done</span>
                     {% elif job.status == 'failed' %}
                     <span class="badge bg-danger">Failed</span>
                     {% elif job.status == 'canceled' %}
                     <span class="badge bg-secondary">Canceled</span>
                     {% endif %}
                 </td>
-                <td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at }}</td>
                 <td>
-                    <a href="{{ url_for('jobs.detail', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
-                    {% if job.status in ('queued', 'running') %}
-                    <form method="POST" action="{{ url_for('api.admin_cancel_job', job_id=job.id) }}" class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-danger">Cancel</button>
-                    </form>
+                    {% if job.runtime_seconds is not none %}
+                    {{ job.runtime_seconds }}s
+                    {% else %}
+                    <span class="text-muted">—</span>
                     {% endif %}
+                </td>
+                <td>
+                    <small>{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at }}</small>
+                </td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <a href="{{ url_for('jobs.detail', job_id=job.id) }}"
+                           class="btn btn-outline-secondary">View</a>
+                        {% if job.output_path %}
+                        <a href="{{ url_for('jobs.download', job_id=job.id) }}"
+                           class="btn btn-outline-success">DL</a>
+                        {% endif %}
+                        {% if job.status in ('queued', 'running') %}
+                        <form method="POST"
+                              action="{{ url_for('api.admin_cancel_job', job_id=job.id) }}"
+                              class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-outline-danger">Cancel</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            <!-- Inline detail row (hidden by default) -->
+            <tr class="job-detail bg-light" id="detail-{{ job.id }}" style="display:none">
+                <td colspan="10">
+                    <div class="p-2">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Stored:</strong> <code>{{ job.stored_filename or 'N/A' }}</code><br>
+                                <strong>Port:</strong> {{ job.port.port_label if job.port else 'N/A' }}<br>
+                                <strong>Started:</strong> {{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') if job.started_at else 'N/A' }}<br>
+                                <strong>Finished:</strong> {{ job.finished_at.strftime('%Y-%m-%d %H:%M:%S') if job.finished_at else 'N/A' }}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Exit Code:</strong> {{ job.exit_code if job.exit_code is not none else 'N/A' }}<br>
+                                <strong>Worker PID:</strong> {{ job.worker_pid or 'N/A' }}<br>
+                                {% if job.error_message %}
+                                <strong>Error:</strong>
+                                <div class="alert alert-danger p-1 mt-1 mb-0"><small><code>{{ job.error_message }}</code></small></div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+
+{% if pages > 1 %}
+<nav>
+    <ul class="pagination justify-content-center">
+        <li class="page-item {{ 'disabled' if page <= 1 }}">
+            <a class="page-link" href="?page={{ page - 1 }}&{{ request_args(status, search, device_id) }}">&laquo;</a>
+        </li>
+        {% for p in range(1, pages + 1) %}
+        <li class="page-item {{ 'active' if p == page }}">
+            <a class="page-link" href="?page={{ p }}&{{ request_args(status, search, device_id) }}">{{ p }}</a>
+        </li>
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if page >= pages }}">
+            <a class="page-link" href="?page={{ page + 1 }}&{{ request_args(status, search, device_id) }}">&raquo;</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
+{% if not jobs %}
+<p class="text-muted text-center py-4">No jobs found.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAll(src) {
+    document.querySelectorAll('.job-checkbox').forEach(cb => {
+        if (cb.dataset.cancelable === 'true') {
+            cb.checked = src.checked;
+        }
+    });
+    updateBulkBtn();
+}
+
+function updateBulkBtn() {
+    const checked = document.querySelectorAll('.job-checkbox:checked');
+    document.getElementById('bulkCancelBtn').disabled = checked.length === 0;
+}
+
+function bulkCancel() {
+    const checked = document.querySelectorAll('.job-checkbox:checked');
+    const container = document.getElementById('bulkJobIds');
+    container.innerHTML = '';
+    checked.forEach(cb => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'job_ids';
+        input.value = cb.value;
+        container.appendChild(input);
+    });
+    document.getElementById('bulkCancelForm').submit();
+}
+
+// Inline detail toggle
+document.querySelectorAll('.toggle-detail').forEach(link => {
+    link.addEventListener('click', function(e) {
+        e.preventDefault();
+        const jobId = this.dataset.jobId;
+        const row = document.getElementById('detail-' + jobId);
+        if (row) {
+            row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+        }
+    });
+});
+</script>
 {% endblock %}

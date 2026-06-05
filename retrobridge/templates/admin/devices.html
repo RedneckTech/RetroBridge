@@ -3,62 +3,429 @@
 {% block content %}
 <h2>Device Management</h2>
 
-<h4>Add Device</h4>
 <div class="row mb-4">
     <div class="col-md-6">
-        <form method="POST">
-            {{ form.hidden_tag() }}
-            <div class="mb-3">
-                {{ form.name.label(class="form-label") }}
-                {{ form.name(class="form-control") }}
+        <div class="card">
+            <div class="card-header">Add Device</div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ add_form.hidden_tag() }}
+                    <div class="mb-3">
+                        {{ add_form.name.label(class="form-label") }}
+                        {{ add_form.name(class="form-control") }}
+                    </div>
+                    <div class="mb-3">
+                        {{ add_form.display_name.label(class="form-label") }}
+                        {{ add_form.display_name(class="form-control") }}
+                    </div>
+                    {{ add_form.submit(class="btn btn-primary") }}
+                </form>
             </div>
-            <div class="mb-3">
-                {{ form.display_name.label(class="form-label") }}
-                {{ form.display_name(class="form-control") }}
-            </div>
-            {{ form.submit(class="btn btn-primary") }}
-        </form>
+        </div>
     </div>
 </div>
 
-<h4>Existing Devices</h4>
+<h4>Devices</h4>
+
 {% for device in devices %}
+{% set stats = namespace(active=0, queued=0, running=0, total_ports=0) %}
+{% for p in device.ports %}
+    {% if p.is_enabled %}
+        {% set stats.total_ports = stats.total_ports + 1 %}
+    {% endif %}
+{% endfor %}
+{% for s in device.terminal_sessions %}
+    {% if s.status == 'active' %}
+        {% set stats.active = stats.active + 1 %}
+    {% endif %}
+{% endfor %}
+{% for j in device.jobs %}
+    {% if j.status == 'queued' %}{% set stats.queued = stats.queued + 1 %}{% endif %}
+    {% if j.status == 'running' %}{% set stats.running = stats.running + 1 %}{% endif %}
+{% endfor %}
+
 <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <strong>{{ device.display_name or device.name }}</strong>
-        <span class="badge bg-{{ 'success' if device.is_enabled else 'secondary' }}">
-            {{ 'Enabled' if device.is_enabled else 'Disabled' }}
-        </span>
+        <div>
+            <strong>{{ device.display_name or device.name }}</strong>
+            <small class="text-muted ms-2">({{ device.name }})</small>
+            <span class="badge ms-2 bg-{{ 'success' if device.is_enabled else 'secondary' }}">
+                {{ 'Enabled' if device.is_enabled else 'Disabled' }}
+            </span>
+        </div>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" data-bs-toggle="modal"
+                    data-bs-target="#editDeviceModal{{ device.id }}">
+                Edit
+            </button>
+            <form method="POST" action="{{ url_for('admin.toggle_device', device_id=device.id) }}"
+                  class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-{{ 'warning' if device.is_enabled else 'success' }}">
+                    {{ 'Disable' if device.is_enabled else 'Enable' }}
+                </button>
+            </form>
+            <button class="btn btn-outline-danger" data-bs-toggle="modal"
+                    data-bs-target="#deleteDeviceModal{{ device.id }}">
+                Delete
+            </button>
+        </div>
     </div>
     <div class="card-body">
+        <div class="row mb-3">
+            <div class="col-md-3">
+                <div class="border rounded p-2 text-center">
+                    <div class="fs-4">{{ stats.active }}</div>
+                    <small class="text-muted">Active Sessions</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="border rounded p-2 text-center">
+                    <div class="fs-4">{{ stats.queued }}</div>
+                    <small class="text-muted">Queued Jobs</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="border rounded p-2 text-center">
+                    <div class="fs-4">{{ stats.running }}</div>
+                    <small class="text-muted">Running Jobs</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="border rounded p-2 text-center">
+                    <div class="fs-4">{{ stats.total_ports }}</div>
+                    <small class="text-muted">Enabled Ports</small>
+                </div>
+            </div>
+        </div>
+
         <h6>Ports</h6>
-        <table class="table table-sm">
-            <thead>
-                <tr>
-                    <th>Label</th>
-                    <th>Path</th>
-                    <th>Purpose</th>
-                    <th>Baud</th>
-                    <th>Parity</th>
-                    <th>Flow</th>
-                    <th>Enabled</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for port in device.ports %}
-                <tr>
-                    <td>{{ port.port_label }}</td>
-                    <td><code>{{ port.dev_path }}</code></td>
-                    <td><span class="badge bg-{{ 'info' if port.purpose == 'interactive' else 'primary' }}">{{ port.purpose }}</span></td>
-                    <td>{{ port.baud }}</td>
-                    <td>{{ port.parity }}</td>
-                    <td>{{ port.flow_control }}</td>
-                    <td><span class="badge bg-{{ 'success' if port.is_enabled else 'secondary' }}">{{ 'Yes' if port.is_enabled else 'No' }}</span></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        {% if device.ports %}
+        <div class="table-responsive">
+            <table class="table table-sm align-middle">
+                <thead>
+                    <tr>
+                        <th>Label</th>
+                        <th>Path</th>
+                        <th>Purpose</th>
+                        <th>Baud</th>
+                        <th>Protocol</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for port in device.ports %}
+                    <tr>
+                        <td><strong>{{ port.port_label }}</strong></td>
+                        <td><code>{{ port.dev_path }}</code></td>
+                        <td>
+                            <span class="badge bg-{{ 'info' if port.purpose == 'interactive' else 'primary' }}">
+                                {{ port.purpose }}
+                            </span>
+                        </td>
+                        <td>{{ port.baud }}</td>
+                        <td>{{ port.transfer_protocol or 'xmodem' }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if port.is_enabled else 'secondary' }}">
+                                {{ 'On' if port.is_enabled else 'Off' }}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#editPortModal{{ port.id }}">
+                                    Edit
+                                </button>
+                                <form method="POST"
+                                      action="{{ url_for('admin.toggle_port', device_id=device.id, port_id=port.id) }}"
+                                      class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-outline-{{ 'warning' if port.is_enabled else 'success' }}">
+                                        {{ 'Off' if port.is_enabled else 'On' }}
+                                    </button>
+                                </form>
+                                <form method="POST"
+                                      action="{{ url_for('admin.delete_port', device_id=device.id, port_id=port.id) }}"
+                                      class="d-inline"
+                                      onsubmit="return confirm('Delete port {{ port.port_label }}?')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-outline-danger">Del</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No ports configured.</p>
+        {% endif %}
+
+        <button class="btn btn-sm btn-outline-primary mt-2" data-bs-toggle="collapse"
+                data-bs-target="#addPortForm{{ device.id }}">
+            + Add Port
+        </button>
+        <div class="collapse mt-3" id="addPortForm{{ device.id }}">
+            <div class="card card-body bg-light">
+                <form method="POST" action="{{ url_for('admin.add_port', device_id=device.id) }}">
+                    {{ port_form.hidden_tag() }}
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            {{ port_form.port_label.label(class="form-label") }}
+                            {{ port_form.port_label(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            {{ port_form.dev_path.label(class="form-label") }}
+                            {{ port_form.dev_path(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            {{ port_form.purpose.label(class="form-label") }}
+                            {{ port_form.purpose(class="form-select form-select-sm") }}
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            {{ port_form.baud.label(class="form-label") }}
+                            {{ port_form.baud(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            {{ port_form.data_bits.label(class="form-label") }}
+                            {{ port_form.data_bits(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            {{ port_form.parity.label(class="form-label") }}
+                            {{ port_form.parity(class="form-select form-select-sm") }}
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            {{ port_form.stop_bits.label(class="form-label") }}
+                            {{ port_form.stop_bits(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.flow_control.label(class="form-label") }}
+                            {{ port_form.flow_control(class="form-select form-select-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.newline_mode.label(class="form-label") }}
+                            {{ port_form.newline_mode(class="form-select form-select-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.transfer_protocol.label(class="form-label") }}
+                            {{ port_form.transfer_protocol(class="form-select form-select-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.max_concurrent_jobs.label(class="form-label") }}
+                            {{ port_form.max_concurrent_jobs(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.max_runtime_seconds.label(class="form-label") }}
+                            {{ port_form.max_runtime_seconds(class="form-control form-control-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.idle_timeout_seconds.label(class="form-label") }}
+                            {{ port_form.idle_timeout_seconds(class="form-control form-control-sm") }}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            {{ port_form.pre_transfer_cmds.label(class="form-label") }}
+                            {{ port_form.pre_transfer_cmds(class="form-control form-control-sm", rows=2,
+                                                           placeholder='e.g. ["AT\\r", "ATDT\\r"]') }}
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            {{ port_form.post_transfer_cmds.label(class="form-label") }}
+                            {{ port_form.post_transfer_cmds(class="form-control form-control-sm", rows=2,
+                                                            placeholder='e.g. ["RUN\\r"]') }}
+                        </div>
+                    </div>
+                    {{ port_form.submit(class="btn btn-sm btn-primary") }}
+                </form>
+            </div>
+        </div>
     </div>
 </div>
+
+<!-- Edit Device Modal -->
+<div class="modal fade" id="editDeviceModal{{ device.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin.edit_device', device_id=device.id) }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit {{ device.display_name or device.name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">Name</label>
+                        <input type="text" name="name" class="form-control"
+                               value="{{ device.name }}" required maxlength="32">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Display Name</label>
+                        <input type="text" name="display_name" class="form-control"
+                               value="{{ device.display_name or '' }}" maxlength="64">
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" name="is_enabled" class="form-check-input"
+                               id="editDevEnabled{{ device.id }}"
+                               {{ 'checked' if device.is_enabled }}>
+                        <label class="form-check-label" for="editDevEnabled{{ device.id }}">Enabled</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Device</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Device Modal -->
+<div class="modal fade" id="deleteDeviceModal{{ device.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin.delete_device', device_id=device.id) }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete Device</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <p>Are you sure you want to delete <strong>{{ device.display_name or device.name }}</strong>?</p>
+                    <p class="text-danger">This will also delete all associated ports, jobs, and sessions.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Port Modals -->
+{% for port in device.ports %}
+<div class="modal fade" id="editPortModal{{ port.id }}" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST"
+                  action="{{ url_for('admin.edit_port', device_id=device.id, port_id=port.id) }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Port: {{ port.port_label }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Label</label>
+                            <input type="text" name="port_label" class="form-control form-control-sm"
+                                   value="{{ port.port_label }}" required>
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Device Path</label>
+                            <input type="text" name="dev_path" class="form-control form-control-sm"
+                                   value="{{ port.dev_path }}" required>
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <label class="form-label">Purpose</label>
+                            <select name="purpose" class="form-select form-select-sm">
+                                <option value="job_queue" {{ 'selected' if port.purpose == 'job_queue' }}>Job Queue</option>
+                                <option value="interactive" {{ 'selected' if port.purpose == 'interactive' }}>Interactive</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            <label class="form-label">Baud Rate</label>
+                            <input type="number" name="baud" class="form-control form-control-sm"
+                                   value="{{ port.baud }}">
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            <label class="form-label">Data Bits</label>
+                            <input type="number" name="data_bits" class="form-control form-control-sm"
+                                   value="{{ port.data_bits }}" min="5" max="8">
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            <label class="form-label">Parity</label>
+                            <select name="parity" class="form-select form-select-sm">
+                                {% for v, label in [('N','None'),('E','Even'),('O','Odd'),('M','Mark'),('S','Space')] %}
+                                <option value="{{ v }}" {{ 'selected' if port.parity == v }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            <label class="form-label">Stop Bits</label>
+                            <input type="number" name="stop_bits" class="form-control form-control-sm"
+                                   value="{{ port.stop_bits }}" min="1" max="2">
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Flow Control</label>
+                            <select name="flow_control" class="form-select form-select-sm">
+                                {% for v, label in [('none','None'),('rtscts','RTS/CTS'),('xonxoff','XON/XOFF')] %}
+                                <option value="{{ v }}" {{ 'selected' if port.flow_control == v }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Newline Mode</label>
+                            <select name="newline_mode" class="form-select form-select-sm">
+                                {% for v, label in [('crlf','CR+LF'),('cr','CR'),('lf','LF')] %}
+                                <option value="{{ v }}" {{ 'selected' if port.newline_mode == v }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Transfer Protocol</label>
+                            <select name="transfer_protocol" class="form-select form-select-sm">
+                                {% for v, label in [('xmodem','XMODEM'),('xmodem1k','XMODEM-1K'),('ymodem','YMODEM'),('kermit','Kermit')] %}
+                                <option value="{{ v }}" {{ 'selected' if port.transfer_protocol == v }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Max Concurrent Jobs</label>
+                            <input type="number" name="max_concurrent_jobs" class="form-control form-control-sm"
+                                   value="{{ port.max_concurrent_jobs }}" min="1">
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Max Runtime (s)</label>
+                            <input type="number" name="max_runtime_seconds" class="form-control form-control-sm"
+                                   value="{{ port.max_runtime_seconds }}">
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Idle Timeout (s)</label>
+                            <input type="number" name="idle_timeout_seconds" class="form-control form-control-sm"
+                                   value="{{ port.idle_timeout_seconds }}">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Pre-Transfer Commands (JSON)</label>
+                            <textarea name="pre_transfer_cmds" class="form-control form-control-sm" rows="2"
+                                      placeholder='e.g. ["AT\\r"]'>{{ port.pre_transfer_cmds or '' }}</textarea>
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Post-Transfer Commands (JSON)</label>
+                            <textarea name="post_transfer_cmds" class="form-control form-control-sm" rows="2"
+                                      placeholder='e.g. ["RUN\\r"]'>{{ port.post_transfer_cmds or '' }}</textarea>
+                        </div>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" name="is_enabled" class="form-check-input"
+                               id="editPortEnabled{{ port.id }}"
+                               {{ 'checked' if port.is_enabled }}>
+                        <label class="form-check-label" for="editPortEnabled{{ port.id }}">Enabled</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Port</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
 {% endfor %}
 {% endblock %}

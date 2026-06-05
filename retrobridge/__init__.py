@@ -1,6 +1,6 @@
 import os
 
-from flask import Flask
+from flask import Flask, request
 from flask_login import LoginManager
 from flask_socketio import SocketIO
 from flask_wtf.csrf import CSRFProtect
@@ -79,6 +79,32 @@ def create_app(config=None):
     register_cli_commands(app)
 
     register_error_handlers(app)
+
+    @app.context_processor
+    def inject_query_args():
+        def make_query_args(status='', search='', device_id=''):
+            parts = []
+            if status:
+                parts.append(f'status={status}')
+            if search:
+                parts.append(f'search={search}')
+            if device_id:
+                parts.append(f'device_id={device_id}')
+            return '&'.join(parts)
+        return dict(request_args=make_query_args)
+
+    @app.before_request
+    def check_maintenance():
+        if request.endpoint in ('auth.login', 'auth.logout', 'static'):
+            return
+        if request.blueprint == 'admin':
+            return
+        from retrobridge.admin.settings_utils import get_bool
+        if get_bool('MAINTENANCE_MODE'):
+            from flask_login import current_user
+            if not current_user.is_authenticated or not current_user.is_admin:
+                from flask import render_template
+                return render_template('maintenance.html'), 503
 
     @app.teardown_appcontext
     def shutdown_session(exception=None):

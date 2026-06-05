@@ -2,21 +2,99 @@
 {% block title %}Admin - Settings{% endblock %}
 {% block content %}
 <h2>Global Settings</h2>
-<div class="row">
-    <div class="col-md-6">
-        <form method="POST">
-            {{ form.hidden_tag() }}
-            {% for s in settings %}
-            <div class="mb-3">
-                <label class="form-label">{{ s.key }}</label>
-                <input type="text" class="form-control" name="{{ s.key }}" value="{{ s.value }}">
-                {% if s.description %}
-                <div class="form-text">{{ s.description }}</div>
-                {% endif %}
+
+<form method="POST">
+    {{ form.hidden_tag() }}
+
+    <div class="row">
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header"><strong>Uploads &amp; Jobs</strong></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        {{ form.max_upload_size_mb.label(class="form-label") }}
+                        {{ form.max_upload_size_mb(class="form-control") }}
+                        <div class="form-text">Maximum file size for job uploads, in megabytes.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.max_jobs_per_hour.label(class="form-label") }}
+                        {{ form.max_jobs_per_hour(class="form-control") }}
+                        <div class="form-text">How many jobs a single user can submit per hour. 0 = unlimited.</div>
+                    </div>
+                </div>
             </div>
-            {% endfor %}
-            {{ form.submit(class="btn btn-primary") }}
-        </form>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header"><strong>User Defaults</strong></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        {{ form.default_max_queued_jobs.label(class="form-label") }}
+                        {{ form.default_max_queued_jobs(class="form-control") }}
+                        <div class="form-text">Default queued/running job limit for new users.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.default_max_terminal_sessions.label(class="form-label") }}
+                        {{ form.default_max_terminal_sessions(class="form-control") }}
+                        <div class="form-text">Default concurrent terminal session limit for new users.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header"><strong>Terminal Sessions</strong></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        {{ form.max_terminal_session_minutes.label(class="form-label") }}
+                        {{ form.max_terminal_session_minutes(class="form-control") }}
+                        <div class="form-text">Hard limit on how long a terminal session can run before being disconnected.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.terminal_idle_timeout_minutes.label(class="form-label") }}
+                        {{ form.terminal_idle_timeout_minutes(class="form-control") }}
+                        <div class="form-text">Disconnect terminal sessions after this many minutes of inactivity.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header"><strong>Worker</strong></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        {{ form.worker_poll_seconds.label(class="form-label") }}
+                        {{ form.worker_poll_seconds(class="form-control") }}
+                        <div class="form-text">How often the job worker checks for new queued jobs.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header"><strong>Site Controls</strong></div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-3">
+                        {{ form.registration_open(class="form-check-input") }}
+                        {{ form.registration_open.label(class="form-check-label") }}
+                        <div class="form-text">When off, new users cannot create accounts.</div>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        {{ form.maintenance_mode(class="form-check-input") }}
+                        {{ form.maintenance_mode.label(class="form-check-label") }}
+                        <div class="form-text">When on, a banner is shown site-wide and non-admin actions are restricted.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-</div>
+
+    <div class="mb-4">
+        {{ form.submit(class="btn btn-primary btn-lg") }}
+    </div>
+</form>
 {% endblock %}

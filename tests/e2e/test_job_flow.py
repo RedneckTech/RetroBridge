@@ -318,3 +318,51 @@ class TestJobDetailAndListing:
         assert resp.status_code == 200
         for i in range(5):
             assert f'dash{i}.bin'.encode() in resp.data
+
+
+class TestJobRateLimit:
+    """Tests for MAX_JOBS_PER_HOUR rate limiting."""
+
+    @pytest.fixture
+    def rate_app(self, app):
+        from retrobridge.models import AdminSetting, Device, DevicePort
+        from werkzeug.security import generate_password_hash
+        user = User(username='rateuser', email='rate@ex.com',
+                    password_hash=generate_password_hash('password'),
+                    max_queued_jobs=20)
+        device = Device(name='centurion')
+        app.db_session.add_all([user, device])
+        app.db_session.flush()
+        app.db_session.add(DevicePort(
+            device_id=device.id, port_label='TTY0',
+            dev_path='/dev/null', purpose='job_queue', baud=9600,
+        ))
+        app.db_session.add(AdminSetting(
+            key='MAX_JOBS_PER_HOUR', value='3',
+            description='Max jobs per hour',
+        ))
+        app.db_session.commit()
+        return app
+
+    def test_rate_limit_blocks_excess_jobs(self, rate_app):
+        c = rate_app.test_client()
+        c.post('/auth/login', data={
+            'username': 'rateuser', 'password': 'password',
+        }, follow_redirects=True)
+
+        # Submit 3 jobs (at the limit)
+        for i in range(3):
+            resp = c.post('/new', data={
+                'device_id': 1,
+                'priority': 0,
+                'file': (io.BytesIO(b'data'), f'job{i}.bin'),
+            }, content_type='multipart/form-data', follow_redirects=True)
+            assert b'submitted successfully' in resp.data.lower()
+
+        # 4th should be rate-limited
+        resp = c.post('/new', data={
+            'device_id': 1,
+            'priority': 0,
+            'file': (io.BytesIO(b'data'), 'blocked.bin'),
+        }, content_type='multipart/form-data', follow_redirects=True)
+        assert b'Rate limit' in resp.data

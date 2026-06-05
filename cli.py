@@ -78,13 +78,15 @@ def register_cli_commands(app):
             ))
 
         default_settings = {
-            'MAX_UPLOAD_SIZE_BYTES': ('8388608', 'Maximum file upload size in bytes'),
+            'MAX_UPLOAD_SIZE_BYTES': ('16777216', 'Maximum file upload size in bytes'),
             'DEFAULT_MAX_QUEUED_JOBS': ('3', 'Default max queued jobs per user'),
             'DEFAULT_MAX_TERMINAL_SESSIONS': ('1', 'Default max terminal sessions per user'),
-            'IDLE_SLEEP_SECONDS': ('5', 'Worker poll interval in seconds'),
             'MAX_JOBS_PER_HOUR': ('10', 'Max job submissions per user per hour'),
-            'MAX_TERMINAL_SESSION_SECONDS': ('3600', 'Global max terminal session duration'),
-            'TERMINAL_IDLE_TIMEOUT_SECONDS': ('300', 'Global terminal idle timeout'),
+            'MAX_TERMINAL_SESSION_SECONDS': ('3600', 'Max terminal session duration in seconds'),
+            'TERMINAL_IDLE_TIMEOUT_SECONDS': ('300', 'Terminal idle timeout in seconds'),
+            'WORKER_POLL_SECONDS': ('5', 'Worker poll interval in seconds'),
+            'REGISTRATION_OPEN': ('1', 'Whether new user registration is allowed'),
+            'MAINTENANCE_MODE': ('0', 'Site-wide maintenance mode toggle'),
         }
         for key, (value, desc) in default_settings.items():
             if not s.get(AdminSetting, key):
