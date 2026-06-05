@@ -25,7 +25,11 @@ def dashboard():
 @jobs_bp.route('/new', methods=['GET', 'POST'])
 @login_required
 def new():
+    from datetime import datetime, timedelta, timezone
+
     from flask import current_app
+    from retrobridge.admin.settings_utils import get_int
+
     form = JobUploadForm()
     devices = current_app.db_session.query(Device).filter_by(is_enabled=True).all()
     form.device_id.choices = [(d.id, d.display_name or d.name) for d in devices]
@@ -34,6 +38,25 @@ def new():
         file = form.file.data
         filename = secure_filename(file.filename or 'program.bin')
         device_id = form.device_id.data
+
+        # Check rate limit (jobs per hour)
+        max_per_hour = get_int('MAX_JOBS_PER_HOUR')
+        if max_per_hour > 0:
+            hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+            recent_count = (
+                current_app.db_session.query(Job)
+                .filter_by(user_id=current_user.id)
+                .filter(Job.created_at >= hour_ago)
+                .count()
+            )
+            if recent_count >= max_per_hour:
+                flash(
+                    f'Rate limit reached: {max_per_hour} jobs per hour. '
+                    'Please wait before submitting another job.',
+                    'danger',
+                )
+                return render_template('jobs/new.html', form=form,
+                                       devices=devices)
 
         # Check quota
         queued_running = (

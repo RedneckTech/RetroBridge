@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Maintenance{% endblock %}
+{% block content %}
+<div class="text-center py-5">
+    <h1 class="display-1 text-muted">503</h1>
+    <h2 class="mb-3">Under Maintenance</h2>
+    <p class="lead text-muted">RetroBridge is temporarily down for maintenance. Please check back soon.</p>
+    <p class="text-muted">Administrators can still <a href="{{ url_for('auth.login') }}">log in</a>.</p>
+</div>
+{% endblock %}

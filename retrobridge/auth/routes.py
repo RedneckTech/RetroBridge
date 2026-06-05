@@ -80,9 +80,15 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for('jobs.dashboard'))
 
+    from flask import current_app
+    from retrobridge.admin.settings_utils import get_bool
+
+    if not get_bool('REGISTRATION_OPEN'):
+        flash('Registration is currently closed.', 'warning')
+        return render_template('auth/register.html', form=RegistrationForm())
+
     form = RegistrationForm()
     if form.validate_on_submit():
-        from flask import current_app
         user = User(
             username=form.username.data,
             email=form.email.data,

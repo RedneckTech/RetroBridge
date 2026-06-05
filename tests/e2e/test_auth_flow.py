@@ -157,3 +157,63 @@ class TestUnauthorizedAccess:
 
         resp = client.get('/api/devices')
         assert resp.status_code == 302
+
+
+class TestRegistrationToggle:
+    """Tests for REGISTRATION_OPEN setting."""
+
+    @pytest.fixture
+    def seeded_app(self, app):
+        from retrobridge.models import AdminSetting
+        app.db_session.add(AdminSetting(
+            key='REGISTRATION_OPEN', value='0',
+            description='Registration toggle',
+        ))
+        app.db_session.commit()
+        return app
+
+    def test_registration_blocked_when_closed(self, seeded_app):
+        c = seeded_app.test_client()
+        resp = c.post('/auth/register', data={
+            'username': 'blocked',
+            'email': 'blocked@ex.com',
+            'full_name': 'Blocked',
+            'password': 'Blocked1!',
+            'confirm_password': 'Blocked1!',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'Registration is currently closed' in resp.data
+
+
+class TestMaintenanceMode:
+    """Tests for MAINTENANCE_MODE setting."""
+
+    @pytest.fixture
+    def maint_app(self, app):
+        from retrobridge.models import AdminSetting, User
+        from werkzeug.security import generate_password_hash
+        app.db_session.add(AdminSetting(
+            key='MAINTENANCE_MODE', value='1',
+            description='Maintenance mode',
+        ))
+        app.db_session.add(User(
+            username='admin', email='a@ex.com',
+            password_hash=generate_password_hash('admin'),
+            is_admin=True,
+        ))
+        app.db_session.commit()
+        return app
+
+    def test_maintenance_shows_503_for_anonymous(self, maint_app):
+        c = maint_app.test_client()
+        resp = c.get('/')
+        assert resp.status_code == 503
+        assert b'Maintenance' in resp.data
+
+    def test_maintenance_allows_admin_access(self, maint_app):
+        c = maint_app.test_client()
+        c.post('/auth/login', data={
+            'username': 'admin', 'password': 'admin',
+        }, follow_redirects=True)
+        resp = c.get('/admin/')
+        assert resp.status_code == 200
