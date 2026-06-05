@@ -496,9 +496,77 @@ class TestAdminJobs:
 class TestAdminSessions:
     """SDD 10.3: Admin session management and force-disconnect."""
 
-    def test_admin_can_view_sessions(self, admin_client):
+    def test_admin_can_view_sessions(self, admin_app, admin_client):
+        admin_app.db_session.add(TerminalSession(
+            user_id=2, device_id=1, port_id=2, status='active'))
+        admin_app.db_session.commit()
+
         resp = admin_client.get('/admin/sessions')
         assert resp.status_code == 200
+        assert b'Active Now' in resp.data
+
+    def test_sessions_page_shows_stats(self, admin_app, admin_client):
+        resp = admin_client.get('/admin/sessions')
+        assert resp.status_code == 200
+        assert b'Avg Duration' in resp.data
+
+    def test_sessions_page_shows_history(self, admin_app, admin_client):
+        admin_app.db_session.add(TerminalSession(
+            user_id=1, device_id=1, port_id=1,
+            status='disconnected', duration_seconds=120,
+            disconnect_reason='user_disconnect'))
+        admin_app.db_session.commit()
+
+        resp = admin_client.get('/admin/sessions')
+        assert resp.status_code == 200
+        assert b'2m 0s' in resp.data
+        assert b'User Disconnect' in resp.data
+
+    def test_admin_can_search_sessions(self, admin_app, admin_client):
+        admin_app.db_session.add(TerminalSession(
+            user_id=2, device_id=1, port_id=2,
+            status='disconnected', duration_seconds=10,
+            disconnect_reason='timeout'))
+        admin_app.db_session.commit()
+
+        resp = admin_client.get('/admin/sessions?search=reguser')
+        assert resp.status_code == 200
+        assert b'reguser' in resp.data
+
+    def test_admin_can_filter_by_disconnect_reason(self, admin_app,
+                                                     admin_client):
+        admin_app.db_session.add(TerminalSession(
+            user_id=1, device_id=1, port_id=1,
+            status='disconnected', duration_seconds=5,
+            disconnect_reason='admin_force'))
+        admin_app.db_session.add(TerminalSession(
+            user_id=2, device_id=1, port_id=2,
+            status='disconnected', duration_seconds=10,
+            disconnect_reason='idle_timeout'))
+        admin_app.db_session.commit()
+
+        resp = admin_client.get('/admin/sessions?reason=admin_force')
+        assert resp.status_code == 200
+        assert b'Admin Force' in resp.data
+
+    def test_admin_can_bulk_disconnect(self, admin_app, admin_client):
+        s1 = TerminalSession(user_id=1, device_id=1, port_id=1,
+                             status='active')
+        s2 = TerminalSession(user_id=2, device_id=1, port_id=2,
+                             status='active')
+        admin_app.db_session.add_all([s1, s2])
+        admin_app.db_session.commit()
+
+        resp = admin_client.post('/admin/sessions/bulk-disconnect', data={
+            'session_ids': [str(s1.id), str(s2.id)],
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'2 session(s) disconnected' in resp.data
+
+        admin_app.db_session.refresh(s1)
+        admin_app.db_session.refresh(s2)
+        assert s1.status == 'disconnected'
+        assert s2.status == 'disconnected'
 
     def test_admin_can_disconnect_active_session(self, admin_app,
                                                    admin_client):

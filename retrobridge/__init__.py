@@ -81,7 +81,9 @@ def create_app(config=None):
     register_error_handlers(app)
 
     @app.context_processor
-    def inject_query_args():
+    def inject_helpers():
+        from datetime import datetime, timezone
+
         def make_query_args(status='', search='', device_id=''):
             parts = []
             if status:
@@ -91,7 +93,11 @@ def create_app(config=None):
             if device_id:
                 parts.append(f'device_id={device_id}')
             return '&'.join(parts)
-        return dict(request_args=make_query_args)
+
+        def utcnow():
+            return datetime.now(timezone.utc)
+
+        return dict(request_args=make_query_args, utcnow=utcnow)
 
     @app.before_request
     def check_maintenance():
