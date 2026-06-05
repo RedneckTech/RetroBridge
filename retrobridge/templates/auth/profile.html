@@ -2,45 +2,163 @@
 {% block title %}Profile{% endblock %}
 {% block content %}
 <div class="row">
-    <div class="col-lg-8 mx-auto">
+    <!-- Left Column: Avatar, Stats, Activity -->
+    <div class="col-md-5">
+        <div class="text-center mb-4">
+            <img src="{{ current_user.avatar_url(size=160) }}" alt="Avatar"
+                 class="rounded-circle mb-3 border border-3 border-secondary"
+                 style="width:120px;height:120px;object-fit:cover">
+            <h4>{{ current_user.full_name or current_user.username }}</h4>
+            <p class="text-muted small mb-1">{{ current_user.email }}</p>
+            {% if current_user.bio %}
+            <p class="fst-italic text-muted small">"{{ current_user.bio }}"</p>
+            {% endif %}
+            <p class="text-muted small mb-0">
+                Member since {{ current_user.created_at.strftime('%B %Y') if current_user.created_at else 'N/A' }}
+            </p>
+            {% if current_user.last_login %}
+            <p class="text-muted small">
+                Last login {{ current_user.last_login.strftime('%b %d, %Y at %H:%M') }}
+            </p>
+            {% endif %}
+        </div>
 
-        <div class="row mb-4">
-            <div class="col-md-4 text-center">
-                <img src="{{ current_user.avatar_url(size=160) }}" alt="Avatar"
-                     class="rounded-circle mb-3 border border-3 border-secondary"
-                     style="width: 140px; height: 140px; object-fit: cover;">
-                <h5>{{ current_user.full_name or current_user.username }}</h5>
-                <p class="text-muted small">{{ current_user.email }}</p>
-                <p class="text-muted small">Member since {{ current_user.created_at.strftime('%B %Y') if current_user.created_at else 'N/A' }}</p>
-                {% if current_user.bio %}
-                <p class="fst-italic text-muted small">"{{ current_user.bio }}"</p>
-                {% endif %}
+        <!-- Quota Usage -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">Usage</h6>
+                {% set q_pct = (stats.queued_count + stats.running_count) / stats.max_queued * 100 if stats.max_queued else 0 %}
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between small">
+                        <span>Job Queue</span>
+                        <span>{{ stats.queued_count + stats.running_count }} / {{ stats.max_queued }}</span>
+                    </div>
+                    <div class="progress" style="height:8px">
+                        <div class="progress-bar {{ 'bg-danger' if q_pct >= 100 else 'bg-warning' if q_pct >= 75 else 'bg-success' }}"
+                             style="width:{{ [q_pct, 100]|min }}%"></div>
+                    </div>
+                </div>
+                {% set s_pct = stats.active_sessions / stats.max_sessions * 100 if stats.max_sessions else 0 %}
+                <div class="mb-0">
+                    <div class="d-flex justify-content-between small">
+                        <span>Terminal Sessions</span>
+                        <span>{{ stats.active_sessions }} / {{ stats.max_sessions }}</span>
+                    </div>
+                    <div class="progress" style="height:8px">
+                        <div class="progress-bar {{ 'bg-danger' if s_pct >= 100 else 'bg-warning' if s_pct >= 75 else 'bg-success' }}"
+                             style="width:{{ [s_pct, 100]|min }}%"></div>
+                    </div>
+                </div>
             </div>
-            <div class="col-md-8">
-                <h2 class="mb-4">Edit Profile</h2>
+        </div>
+
+        <!-- Stats -->
+        <div class="row mb-3 g-2 text-center">
+            <div class="col-4">
+                <div class="border rounded p-2">
+                    <div class="fs-5 fw-bold">{{ stats.total_jobs }}</div>
+                    <small class="text-muted">Jobs</small>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="border rounded p-2">
+                    <div class="fs-5 fw-bold">{{ stats.completed_count }}</div>
+                    <small class="text-muted">Done</small>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="border rounded p-2">
+                    <div class="fs-5 fw-bold">{{ stats.total_sessions }}</div>
+                    <small class="text-muted">Sessions</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Jobs -->
+        {% if recent_jobs %}
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <strong>Recent Jobs</strong>
+                <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-sm btn-outline-secondary">All</a>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for job in recent_jobs %}
+                <a href="{{ url_for('jobs.detail', job_id=job.id) }}"
+                   class="list-group-item list-group-item-action py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small>{{ job.original_filename }}</small>
+                        <span class="badge bg-{{ 'success' if job.status == 'completed' else 'warning' if job.status == 'queued' else 'info' if job.status == 'running' else 'danger' if job.status == 'failed' else 'secondary' }}"
+                              style="font-size:0.65rem">{{ job.status|title }}</span>
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Recent Sessions -->
+        {% if recent_sessions %}
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <strong>Recent Sessions</strong>
+                <a href="{{ url_for('terminal.index') }}" class="btn btn-sm btn-outline-secondary">Terminal</a>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for s in recent_sessions %}
+                <div class="list-group-item py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <small>{{ s.device.display_name or s.device.name if s.device else 'N/A' }}</small>
+                            <br><small class="text-muted">{{ s.connected_at.strftime('%m/%d %H:%M') if s.connected_at }}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-{{ 'success' if s.status == 'active' else 'secondary' }}"
+                                  style="font-size:0.65rem">{{ s.status|title }}</span>
+                            {% if s.duration_seconds %}
+                            <br><small class="text-muted">{{ s.duration_seconds }}s</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right Column: Edit Form + Account Management -->
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="mb-4">Edit Profile</h4>
                 <form method="POST">
                     {{ form.hidden_tag() }}
+
                     <div class="mb-3">
-                        <label class="form-label">Avatar</label>
-                        <p class="text-muted small">Avatars are provided by <a href="https://gravatar.com" target="_blank">Gravatar</a> based on your email address.</p>
+                        <label class="form-label text-muted small">Avatar</label>
+                        <p class="text-muted small mb-0">
+                            Provided by <a href="https://gravatar.com" target="_blank">Gravatar</a>
+                            based on your email. Change your email to update.
+                        </p>
                     </div>
-                    <div class="mb-3">
-                        {{ form.email.label(class="form-label") }}
-                        {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
-                        {% for error in form.email.errors %}
-                        <div class="invalid-feedback">{{ error }}</div>
-                        {% endfor %}
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.email.label(class="form-label") }}
+                            {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
+                            {% for error in form.email.errors %}
+                            <div class="invalid-feedback">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            {{ form.full_name.label(class="form-label") }}
+                            {{ form.full_name(class="form-control") }}
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        {{ form.full_name.label(class="form-label") }}
-                        {{ form.full_name(class="form-control") }}
-                    </div>
+
                     <div class="mb-3">
                         {{ form.bio.label(class="form-label") }}
-                        {{ form.bio(class="form-control", rows=3, placeholder="Tell the community about yourself...") }}
-                        {% for error in form.bio.errors %}
-                        <div class="invalid-feedback">{{ error }}</div>
-                        {% endfor %}
+                        {{ form.bio(class="form-control", rows=2, placeholder="Tell the community about yourself...") }}
                     </div>
 
                     <hr>
@@ -48,42 +166,79 @@
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             {{ form.terminal_font_size.label(class="form-label") }}
-                            {{ form.terminal_font_size(class="form-control" + (" is-invalid" if form.terminal_font_size.errors else ""), min=10, max=24) }}
-                            {% for error in form.terminal_font_size.errors %}
-                            <div class="invalid-feedback">{{ error }}</div>
-                            {% endfor %}
+                            {{ form.terminal_font_size(class="form-control", min=10, max=24) }}
                         </div>
                         <div class="col-md-6 mb-3">
                             {{ form.terminal_color_scheme.label(class="form-label") }}
-                            {{ form.terminal_color_scheme(class="form-select" + (" is-invalid" if form.terminal_color_scheme.errors else "")) }}
-                            {% for error in form.terminal_color_scheme.errors %}
-                            <div class="invalid-feedback">{{ error }}</div>
-                            {% endfor %}
+                            {{ form.terminal_color_scheme(class="form-select") }}
                         </div>
                     </div>
 
                     <hr>
                     <h5>Change Password</h5>
                     <p class="text-muted small">Leave blank to keep your current password.</p>
-                    <div class="mb-3">
-                        {{ form.new_password.label(class="form-label") }}
-                        {{ form.new_password(class="form-control" + (" is-invalid" if form.new_password.errors else "")) }}
-                        {% for error in form.new_password.errors %}
-                        <div class="invalid-feedback">{{ error }}</div>
-                        {% endfor %}
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.new_password.label(class="form-label") }}
+                            {{ form.new_password(class="form-control", placeholder="New password") }}
+                            {% for error in form.new_password.errors %}
+                            <div class="invalid-feedback d-block">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            {{ form.confirm_password.label(class="form-label") }}
+                            {{ form.confirm_password(class="form-control", placeholder="Confirm new password") }}
+                            {% for error in form.confirm_password.errors %}
+                            <div class="invalid-feedback d-block">{{ error }}</div>
+                            {% endfor %}
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        {{ form.confirm_password.label(class="form-label") }}
-                        {{ form.confirm_password(class="form-control" + (" is-invalid" if form.confirm_password.errors else "")) }}
-                        {% for error in form.confirm_password.errors %}
-                        <div class="invalid-feedback">{{ error }}</div>
-                        {% endfor %}
+
+                    <div class="d-flex gap-2">
+                        {{ form.submit(class="btn btn-primary") }}
+                        <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
-                    {{ form.submit(class="btn btn-primary") }}
                 </form>
             </div>
         </div>
 
+        <!-- Account Management -->
+        <div class="card mt-3 border-danger">
+            <div class="card-header text-danger"><strong>Danger Zone</strong></div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Permanently delete your account and all associated data (jobs, sessions).
+                    This cannot be undone.
+                </p>
+                <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal"
+                        data-bs-target="#deleteAccountModal">
+                    Delete My Account
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Account Modal -->
+<div class="modal fade" id="deleteAccountModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('auth.delete_account') }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete Account</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <p class="text-danger"><strong>Warning:</strong> This action is permanent and cannot be undone.</p>
+                    <p>All your jobs, session history, and account data will be permanently deleted.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Yes, Delete My Account</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 {% endblock %}

@@ -125,6 +125,73 @@ class TestRegistrationLoginLogout:
         assert resp.status_code == 200
         assert b'newuser@example.com' in resp.data
 
+    def test_profile_shows_quota_usage(self, client, app):
+        _register(client)
+        _login(client)
+
+        resp = client.get('/auth/profile')
+        assert resp.status_code == 200
+        assert b'Job Queue' in resp.data
+        assert b'Terminal Sessions' in resp.data
+
+    def test_profile_shows_stats(self, client, app):
+        _register(client)
+        _login(client)
+
+        from retrobridge.models import Device, DevicePort, Job, TerminalSession
+        uid = app.db_session.query(User).filter_by(username='newuser').first().id
+        d = Device(name='testdev')
+        app.db_session.add(d)
+        app.db_session.flush()
+        p = DevicePort(device_id=d.id, port_label='TTY0',
+                       dev_path='/dev/null', purpose='job_queue')
+        app.db_session.add(p)
+        app.db_session.flush()
+        app.db_session.add_all([
+            Job(user_id=uid, device_id=d.id, original_filename='a.bin',
+                status='completed'),
+            TerminalSession(user_id=uid, device_id=d.id, port_id=p.id,
+                            status='disconnected', duration_seconds=30),
+        ])
+        app.db_session.commit()
+
+        resp = client.get('/auth/profile')
+        assert b'Done' in resp.data
+        assert b'Sessions' in resp.data
+
+
+class TestAccountDeletion:
+    """Tests for self-service account deletion."""
+
+    @pytest.fixture
+    def app_with_seed(self, app):
+        from retrobridge.models import Device, DevicePort
+        from werkzeug.security import generate_password_hash
+        user = User(username='deleteuser', email='del@ex.com',
+                    password_hash=generate_password_hash('Password1'))
+        device = Device(name='centurion')
+        app.db_session.add_all([user, device])
+        app.db_session.commit()
+        return app
+
+    def test_user_can_delete_own_account(self, app_with_seed):
+        c = app_with_seed.test_client()
+        c.post('/auth/login', data={
+            'username': 'deleteuser', 'password': 'Password1',
+        }, follow_redirects=True)
+
+        resp = c.post('/auth/delete-account', follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'account has been deleted' in resp.data.lower()
+
+        user = app_with_seed.db_session.query(User).filter_by(
+            username='deleteuser').first()
+        assert user is None
+
+    def test_delete_account_requires_login(self, client):
+        resp = client.post('/auth/delete-account')
+        assert resp.status_code == 302
+
 
 class TestUnauthorizedAccess:
     """SDD 10.3: Unauthorized access scenarios."""

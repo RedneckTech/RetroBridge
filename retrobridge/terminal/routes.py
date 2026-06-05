@@ -43,6 +43,8 @@ def index():
 @login_required
 def session(device_id):
     from flask import current_app
+    import json
+
     device = current_app.db_session.get(Device, device_id)
     if not device:
         flash('Device not found.', 'danger')
@@ -53,4 +55,13 @@ def session(device_id):
         flash('No interactive ports available for this device.', 'warning')
         return redirect(url_for('terminal.index'))
 
-    return render_template('terminal/session.html', device=device)
+    prefs = {}
+    if current_user.preferences:
+        try:
+            prefs = json.loads(current_user.preferences)
+        except json.JSONDecodeError:
+            pass
+
+    return render_template('terminal/session.html', device=device,
+                           terminal_font_size=prefs.get('terminal_font_size', 14),
+                           terminal_color_scheme=prefs.get('terminal_color_scheme', 'dark'))

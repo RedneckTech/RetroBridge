@@ -1,22 +1,28 @@
 // RetroBridge Terminal JavaScript
 // Handles xterm.js initialization and WebSocket communication via Flask-SocketIO
 
+const COLOR_SCHEMES = {
+    dark:   { background: '#0a0a0a', foreground: '#33ff33', cursor: '#33ff33', selectionBackground: '#33ff3366' },
+    amber:  { background: '#0a0a0a', foreground: '#ffb000', cursor: '#ffb000', selectionBackground: '#ffb00066' },
+    light:  { background: '#f5f5f5', foreground: '#1a1a1a', cursor: '#1a1a1a', selectionBackground: '#1a1a1a33' },
+    cyan:   { background: '#0a0a0a', foreground: '#00ffff', cursor: '#00ffff', selectionBackground: '#00ffff66' },
+};
+
 let term;
 let socket;
 let fitAddon;
 let sessionId = null;
 let connected = false;
 
-function initTerminal(deviceId) {
+function initTerminal(deviceId, prefs) {
+    prefs = prefs || {};
+    const scheme = COLOR_SCHEMES[prefs.colorScheme] || COLOR_SCHEMES.dark;
+
     term = new Terminal({
         cursorBlink: true,
-        fontSize: 14,
+        fontSize: prefs.fontSize || 14,
         fontFamily: "'Courier New', monospace",
-        theme: {
-            background: '#1a1a1a',
-            foreground: '#e0e0e0',
-            cursor: '#ffffff',
-        },
+        theme: scheme,
         cols: 80,
         rows: 24,
     });
