@@ -689,6 +689,42 @@ class TestAdminDashboard:
 
         resp = admin_client.get('/admin/')
         assert resp.status_code == 200
+        assert b'Users' in resp.data
+        assert b'Jobs' in resp.data
+        assert b'Running' in resp.data
+        assert b'Active Sessions' in resp.data
+
+    def test_admin_dashboard_shows_recent_activity(self, admin_app,
+                                                     admin_client):
+        admin_app.db_session.add_all([
+            Job(user_id=1, device_id=1, original_filename='recent.bin',
+                status='completed'),
+            TerminalSession(user_id=2, device_id=1, port_id=2,
+                            status='disconnected', duration_seconds=30),
+        ])
+        admin_app.db_session.commit()
+
+        resp = admin_client.get('/admin/')
+        assert resp.status_code == 200
+        assert b'Recent Jobs' in resp.data
+        assert b'Recent Sessions' in resp.data
+        assert b'recent.bin' in resp.data
+
+    def test_admin_dashboard_shows_device_cards(self, admin_client):
+        resp = admin_client.get('/admin/')
+        assert resp.status_code == 200
+        assert b'Centurion' in resp.data
+
+    def test_admin_dashboard_has_quick_actions(self, admin_client):
+        resp = admin_client.get('/admin/')
+        assert resp.status_code == 200
+        assert b'Add Device' in resp.data
+        assert b'Create User' in resp.data
+
+    def test_admin_dashboard_shows_system_status(self, admin_client):
+        resp = admin_client.get('/admin/')
+        assert resp.status_code == 200
+        assert b'System Normal' in resp.data
 
     def test_non_admin_cannot_access_dashboard(self, regular_client):
         resp = regular_client.get('/admin/')

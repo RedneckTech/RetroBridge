@@ -15,15 +15,52 @@ from retrobridge.models import (
 @login_required
 @admin_required
 def dashboard():
+    from datetime import datetime, timedelta, timezone
+
     from flask import current_app
+    from retrobridge.admin.settings_utils import get_bool
+
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    db = current_app.db_session
     stats = {
-        'total_users': current_app.db_session.query(User).count(),
-        'total_jobs': current_app.db_session.query(Job).count(),
-        'running_jobs': current_app.db_session.query(Job).filter_by(status='running').count(),
-        'active_sessions': current_app.db_session.query(TerminalSession).filter_by(status='active').count(),
-        'devices': current_app.db_session.query(Device).all(),
+        'total_users': db.query(User).count(),
+        'total_jobs': db.query(Job).count(),
+        'running_jobs': db.query(Job).filter_by(status='running').count(),
+        'queued_jobs': db.query(Job).filter_by(status='queued').count(),
+        'failed_jobs': db.query(Job).filter_by(status='failed').count(),
+        'completed_jobs': db.query(Job).filter_by(status='completed').count(),
+        'active_sessions': db.query(TerminalSession).filter_by(status='active').count(),
+        'users_today': db.query(User).filter(User.created_at >= today).count(),
+        'jobs_today': db.query(Job).filter(Job.created_at >= today).count(),
+        'sessions_today': db.query(TerminalSession).filter(
+            TerminalSession.connected_at >= today).count(),
+        'maintenance_mode': get_bool('MAINTENANCE_MODE'),
+        'registration_open': get_bool('REGISTRATION_OPEN'),
     }
-    return render_template('admin/dashboard.html', stats=stats)
+
+    devices = db.query(Device).order_by(Device.name).all()
+    device_stats = []
+    for d in devices:
+        device_stats.append({
+            'device': d,
+            'active_sessions': db.query(TerminalSession).filter_by(
+                device_id=d.id, status='active').count(),
+            'queued_jobs': db.query(Job).filter_by(
+                device_id=d.id, status='queued').count(),
+            'running_jobs': db.query(Job).filter_by(
+                device_id=d.id, status='running').count(),
+            'enabled_ports': len([p for p in d.ports if p.is_enabled]),
+        })
+
+    recent_jobs = db.query(Job).order_by(Job.created_at.desc()).limit(10).all()
+    recent_sessions = db.query(TerminalSession).order_by(
+        TerminalSession.connected_at.desc()).limit(10).all()
+
+    return render_template('admin/dashboard.html', stats=stats,
+                           device_stats=device_stats,
+                           recent_jobs=recent_jobs,
+                           recent_sessions=recent_sessions)
 
 
 # -- User Management --
