@@ -12,9 +12,11 @@ Usage:
 """
 
 import argparse
+import errno
 import json
 import logging
 import os
+import select
 import signal
 import sys
 import time
@@ -97,16 +99,40 @@ def get_serial_params(port):
     }
 
 
+def _fd_read(fd, size, timeout):
+    """Read from fd with select-based timeout. Returns data or b'' on EOF/timeout."""
+    r, _, _ = select.select([fd], [], [], timeout)
+    if not r:
+        return b''
+    try:
+        return os.read(fd, size)
+    except OSError as e:
+        if e.errno == errno.EIO:
+            return b''
+        raise
+
+
+def _fd_write(fd, data):
+    """Write all data to fd."""
+    return os.write(fd, data)
+
+
 def _manual_xmodem_send(ser, stream, _log_line):
-    """Minimal XMODEM sender as fallback."""
+    """Minimal XMODEM sender using raw fd ops (avoids pyserial PTY hangup errors)."""
+    fd = ser.fd
     file_size = stream.seek(0, 2)
     stream.seek(0)
 
-    # Wait for 'C' (CRC mode)
-    ser.timeout = 10
-    c = ser.read(1)
-    if c != b'C':
-        _log_line('XMODEM handshake failed: no C received', 'SYS')
+    # Wait for 'C' (CRC mode) — drain any stale data, then wait for C
+    # Use raw fd reads to avoid pyserial's "reports readiness" error on PTY hangup
+    deadline = time.time() + 10
+    c = b''
+    while time.time() < deadline:
+        c = _fd_read(fd, 1, 1.0)
+        if c == b'C':
+            break
+    else:
+        _log_line('XMODEM handshake failed: C not received within 10s', 'SYS')
         return False
 
     block_num = 1
@@ -123,9 +149,8 @@ def _manual_xmodem_send(ser, stream, _log_line):
         cksum = sum(data) % 256
         block += bytes([cksum])
 
-        ser.write(block)
-        ser.timeout = 5
-        ack = ser.read(1)
+        _fd_write(fd, block)
+        ack = _fd_read(fd, 1, 5.0)
         if ack != b'\x06':
             _log_line(f'XMODEM: expected ACK, got {repr(ack)}', 'SYS')
             return False
@@ -133,9 +158,8 @@ def _manual_xmodem_send(ser, stream, _log_line):
         block_num = (block_num + 1) % 256
 
     # Send EOT
-    ser.write(b'\x04')
-    ser.timeout = 5
-    ack = ser.read(1)
+    _fd_write(fd, b'\x04')
+    ack = _fd_read(fd, 1, 5.0)
     if ack == b'\x06':
         _log_line('XMODEM transfer complete', 'SYS')
         return True
@@ -239,9 +263,14 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
 
             # Drain any initial data before pre-transfer
             time.sleep(0.2)
-            while ser.in_waiting:
-                data = ser.read(ser.in_waiting)
-                _log_line(data.decode('utf-8', errors='replace'), 'RX')
+            try:
+                while True:
+                    chunk = _fd_read(ser.fd, 1024, 0.2)
+                    if not chunk:
+                        break
+                    _log_line(chunk.decode('utf-8', errors='replace'), 'RX')
+            except (OSError, SerialException):
+                pass
 
             # Execute pre-transfer commands (no drain between cmd and XMODEM)
             pre_cmds = []
@@ -253,7 +282,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
 
             for cmd in pre_cmds:
                 logger.info(f'Sending pre-transfer command: {repr(cmd)}')
-                ser.write(cmd.encode('utf-8', errors='replace'))
+                _fd_write(ser.fd, cmd.encode('utf-8', errors='replace'))
                 _log_line(cmd, 'TX')
 
             # Transfer file via XMODEM (library first, manual fallback)
@@ -265,12 +294,11 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
                 success = _manual_xmodem_send(ser, f, _log_line)
                 if not success:
                     f.seek(0)
+                    fd = ser.fd
                     def getc(size, timeout=1):
-                        ser.timeout = timeout
-                        return ser.read(size) or b''
+                        return _fd_read(fd, size, timeout) or None
                     def putc(data, timeout=1):
-                        ser.timeout = timeout
-                        return ser.write(data)
+                        return _fd_write(fd, data)
                     modem = XMODEM1k(getc, putc)
                     success = modem.send(f, retry=8)
 
@@ -294,7 +322,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
 
             for cmd in post_cmds:
                 logger.info(f'Sending post-transfer command: {repr(cmd)}')
-                ser.write(cmd.encode('utf-8', errors='replace'))
+                _fd_write(ser.fd, cmd.encode('utf-8', errors='replace'))
                 _log_line(cmd, 'TX')
                 time.sleep(0.3)
 
@@ -314,23 +342,20 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
                     break
 
                 try:
-                    if ser.in_waiting:
-                        try:
-                            data = ser.read(ser.in_waiting)
-                        except SerialException:
-                            data = None
-                        if data:
-                            decoded = data.decode('utf-8', errors='replace')
-                            _log_line(decoded, 'RX')
-                            last_activity = time.time()
-                    else:
-                        time.sleep(0.1)
-                        if time.time() - last_activity > idle_timeout:
-                            _log_line(f'Idle timeout ({idle_timeout}s) reached', 'SYS')
-                            break
+                    data = _fd_read(ser.fd, 1024, 0.2)
                 except (OSError, SerialException):
                     _log_line('PTY closed — output capture complete', 'SYS')
                     break
+
+                if data:
+                    decoded = data.decode('utf-8', errors='replace')
+                    _log_line(decoded, 'RX')
+                    last_activity = time.time()
+                else:
+                    if time.time() - last_activity > idle_timeout:
+                        _log_line(f'Idle timeout ({idle_timeout}s) reached', 'SYS')
+                        break
+                    time.sleep(0.1)
 
             job.status = 'completed'
             job.finished_at = datetime.now(timezone.utc)

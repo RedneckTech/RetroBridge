@@ -184,7 +184,6 @@ def settings():
             if s.key in form._fields:
                 form._fields[s.key].data = s.value
     elif form.validate_on_submit():
-        from retrobridge.models import AdminSetting
         for field_name in form._fields:
             if field_name in ('submit', 'csrf_token'):
                 continue
