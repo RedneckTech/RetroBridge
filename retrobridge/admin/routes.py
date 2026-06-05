@@ -421,16 +421,113 @@ def bulk_cancel_jobs():
 @login_required
 @admin_required
 def sessions():
+    from datetime import datetime, timedelta, timezone
+
     from flask import current_app
-    active = current_app.db_session.query(TerminalSession).filter_by(status='active').all()
-    history = (
+    page = request.args.get('page', 1, type=int)
+    per_page = 20
+    search = request.args.get('search', '').strip()
+    reason_filter = request.args.get('reason', '').strip()
+
+    # Active sessions (always show all) — compute elapsed seconds
+    now_utc = datetime.now(timezone.utc)
+    active_raw = current_app.db_session.query(TerminalSession).filter_by(
+        status='active').order_by(TerminalSession.connected_at.desc()).all()
+    active = []
+    for s in active_raw:
+        elapsed = 0
+        if s.connected_at:
+            connected = s.connected_at
+            if connected.tzinfo is None:
+                connected = connected.replace(tzinfo=timezone.utc)
+            elapsed = int((now_utc - connected).total_seconds())
+        active.append({'session': s, 'elapsed': elapsed})
+
+    # History with filters
+    history_query = (
         current_app.db_session.query(TerminalSession)
         .filter(TerminalSession.status != 'active')
         .order_by(TerminalSession.connected_at.desc())
-        .limit(50)
-        .all()
     )
-    return render_template('admin/sessions.html', active_sessions=active, history=history)
+
+    if search:
+        history_query = history_query.filter(
+            TerminalSession.user.has(username=search) |
+            TerminalSession.device.has(name=search)
+        )
+
+    if reason_filter:
+        history_query = history_query.filter_by(disconnect_reason=reason_filter)
+
+    total = history_query.count()
+    history = history_query.offset((page - 1) * per_page).limit(per_page).all()
+
+    # Stats
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    today_count = current_app.db_session.query(TerminalSession).filter(
+        TerminalSession.connected_at >= today_start).count()
+
+    # Compute average duration for completed sessions
+    completed = current_app.db_session.query(TerminalSession).filter(
+        TerminalSession.status != 'active',
+        TerminalSession.duration_seconds.isnot(None),
+    ).all()
+    avg_duration = (
+        int(sum(s.duration_seconds for s in completed) / len(completed))
+        if completed else 0
+    )
+
+    # Distinct disconnect reasons for filter
+    reasons = [
+        r[0] for r in current_app.db_session.query(
+            TerminalSession.disconnect_reason).filter(
+            TerminalSession.disconnect_reason.isnot(None),
+            TerminalSession.status != 'active',
+        ).distinct().all()
+    ]
+
+    stats = {
+        'active_count': len(active),
+        'today_count': today_count,
+        'avg_duration': avg_duration,
+    }
+
+    return render_template('admin/sessions.html',
+                           active_sessions=active, history=history,
+                           total=total, page=page,
+                           pages=(total + per_page - 1) // per_page,
+                           search=search, reason_filter=reason_filter,
+                           reasons=reasons, stats=stats)
+
+
+@admin_bp.route('/sessions/bulk-disconnect', methods=['POST'])
+@login_required
+@admin_required
+def bulk_disconnect():
+    from flask import current_app
+    from datetime import datetime, timezone
+
+    ids = request.form.getlist('session_ids')
+    count = 0
+    for sid in ids:
+        session = current_app.db_session.get(TerminalSession, int(sid))
+        if session and session.status == 'active':
+            session.status = 'disconnected'
+            session.disconnect_reason = 'admin_force'
+            session.disconnected_at = datetime.now(timezone.utc)
+            if session.connected_at:
+                connected = session.connected_at
+                if connected.tzinfo is None:
+                    from datetime import timezone as tz
+                    connected = connected.replace(tzinfo=tz.utc)
+                session.duration_seconds = int(
+                    (datetime.now(timezone.utc) - connected).total_seconds()
+                )
+            count += 1
+    current_app.db_session.commit()
+    flash(f'{count} session(s) disconnected.', 'info')
+    return redirect(url_for('admin.sessions'))
 
 
 SETTING_MAP = {

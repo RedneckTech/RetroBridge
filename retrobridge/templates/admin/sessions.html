@@ -3,34 +3,110 @@
 {% block content %}
 <h2>Terminal Sessions</h2>
 
-<h4>Active Sessions</h4>
+<!-- Stats -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="border rounded p-3 text-center">
+            <div class="fs-3 text-info">{{ stats.active_count }}</div>
+            <small class="text-muted">Active Now</small>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="border rounded p-3 text-center">
+            <div class="fs-3">{{ stats.today_count }}</div>
+            <small class="text-muted">Today</small>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="border rounded p-3 text-center">
+            <div class="fs-3">
+                {% if stats.avg_duration >= 3600 %}
+                {{ (stats.avg_duration // 3600) }}h {{ (stats.avg_duration % 3600) // 60 }}m
+                {% elif stats.avg_duration >= 60 %}
+                {{ stats.avg_duration // 60 }}m {{ stats.avg_duration % 60 }}s
+                {% else %}
+                {{ stats.avg_duration }}s
+                {% endif %}
+            </div>
+            <small class="text-muted">Avg Duration</small>
+        </div>
+    </div>
+</div>
+
+<!-- Active Sessions -->
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h4>Active Sessions</h4>
+    <div>
+        <button class="btn btn-sm btn-outline-danger" id="bulkDisconnectBtn" disabled
+                onclick="bulkDisconnect()">
+            Disconnect Selected
+        </button>
+        <a href="{{ url_for('admin.sessions') }}" class="btn btn-sm btn-outline-secondary ms-1"
+           title="Refresh">&#x21bb;</a>
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('admin.bulk_disconnect') }}" id="bulkDisconnectForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div id="bulkSessionIds"></div>
+</form>
+
 {% if active_sessions %}
-<div class="table-responsive">
-    <table class="table table-hover">
+<div class="table-responsive mb-4">
+    <table class="table table-hover align-middle">
         <thead>
             <tr>
+                <th style="width:30px">
+                    <input type="checkbox" class="form-check-input" id="selectAll"
+                           onchange="toggleAll(this)">
+                </th>
                 <th>ID</th>
                 <th>User</th>
                 <th>Device</th>
                 <th>Port</th>
                 <th>Connected</th>
+                <th>Duration</th>
+                <th>Data</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody>
-            {% for s in active_sessions %}
+            {% for item in active_sessions %}
+            {% set s = item.session %}
+            {% set elapsed = item.elapsed %}
             <tr>
+                <td>
+                    <input type="checkbox" class="form-check-input session-checkbox"
+                           value="{{ s.id }}" onchange="updateBulkBtn()">
+                </td>
                 <td>{{ s.id }}</td>
                 <td>{{ s.user.username if s.user else 'N/A' }}</td>
                 <td>{{ s.device.display_name or s.device.name if s.device else 'N/A' }}</td>
-                <td>{{ s.port.port_label if s.port else 'N/A' }}</td>
-                <td>{{ s.connected_at.strftime('%Y-%m-%d %H:%M') if s.connected_at }}</td>
+                <td><code>{{ s.port.port_label if s.port else 'N/A' }}</code></td>
+                <td><small>{{ s.connected_at.strftime('%m-%d %H:%M') if s.connected_at }}</small></td>
                 <td>
-                    <form method="POST" action="{{ url_for('api.disconnect_session', session_id=s.id) }}" class="d-inline"
-                          onsubmit="return confirm('Force disconnect this session?')">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-danger">Force Disconnect</button>
-                    </form>
+                    <span class="badge bg-info">
+                        {% if elapsed >= 3600 %}
+                        {{ elapsed // 3600 }}h {{ (elapsed % 3600) // 60 }}m
+                        {% elif elapsed >= 60 %}
+                        {{ elapsed // 60 }}m {{ elapsed % 60 }}s
+                        {% else %}
+                        {{ elapsed }}s
+                        {% endif %}
+                    </span>
+                </td>
+                <td>
+                    <small>
+                        <span class="text-success">&#x2191;{{ (s.bytes_sent / 1024)|round(1) if s.bytes_sent else 0 }}K</span>
+                        <span class="text-muted mx-1">/</span>
+                        <span class="text-primary">&#x2193;{{ (s.bytes_received / 1024)|round(1) if s.bytes_received else 0 }}K</span>
+                    </small>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-danger" data-bs-toggle="modal"
+                            data-bs-target="#disconnectModal{{ s.id }}">
+                        Disconnect
+                    </button>
                 </td>
             </tr>
             {% endfor %}
@@ -38,21 +114,57 @@
     </table>
 </div>
 {% else %}
-<p class="text-muted">No active terminal sessions.</p>
+<p class="text-muted mb-4">No active terminal sessions.</p>
 {% endif %}
 
-<h4 class="mt-4">Session History</h4>
+<!-- History -->
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h4>Session History</h4>
+    <span class="text-muted small">{{ total }} total</span>
+</div>
+
+<!-- History Filters -->
+<div class="row mb-3 align-items-end">
+    <div class="col-md-6">
+        <form method="GET" class="d-flex">
+            {% if reason_filter %}<input type="hidden" name="reason" value="{{ reason_filter }}">{% endif %}
+            <input type="search" name="search" class="form-control form-control-sm me-2"
+                   placeholder="Username or device..." value="{{ search }}">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Search</button>
+            {% if search or reason_filter %}
+            <a href="{{ url_for('admin.sessions') }}" class="btn btn-sm btn-outline-danger ms-1">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+    <div class="col-md-3">
+        <form method="GET" id="reasonFilterForm">
+            {% if search %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
+            <select name="reason" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">All Reasons</option>
+                {% for r in reasons %}
+                <option value="{{ r }}" {{ 'selected' if reason_filter == r }}>
+                    {{ r | replace('_', ' ') | title }}
+                </option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+</div>
+
 {% if history %}
 <div class="table-responsive">
-    <table class="table table-hover">
+    <table class="table table-hover align-middle">
         <thead>
             <tr>
                 <th>ID</th>
                 <th>User</th>
                 <th>Device</th>
-                <th>Status</th>
+                <th>Port</th>
+                <th>Connected</th>
                 <th>Duration</th>
-                <th>Reason</th>
+                <th>Data</th>
+                <th>Disconnect Reason</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -61,15 +173,146 @@
                 <td>{{ s.id }}</td>
                 <td>{{ s.user.username if s.user else 'N/A' }}</td>
                 <td>{{ s.device.display_name or s.device.name if s.device else 'N/A' }}</td>
-                <td><span class="badge bg-secondary">{{ s.status }}</span></td>
-                <td>{{ s.duration_seconds }}s</td>
-                <td>{{ s.disconnect_reason or 'N/A' }}</td>
+                <td><code>{{ s.port.port_label if s.port else 'N/A' }}</code></td>
+                <td><small>{{ s.connected_at.strftime('%m-%d %H:%M') if s.connected_at }}</small></td>
+                <td>
+                    {% set dur = s.duration_seconds or 0 %}
+                    {% if dur >= 3600 %}
+                    {{ dur // 3600 }}h {{ (dur % 3600) // 60 }}m
+                    {% elif dur >= 60 %}
+                    {{ dur // 60 }}m {{ dur % 60 }}s
+                    {% else %}
+                    {{ dur }}s
+                    {% endif %}
+                </td>
+                <td>
+                    <small>
+                        <span class="text-success">&#x2191;{{ (s.bytes_sent / 1024)|round(1) if s.bytes_sent else 0 }}K</span>
+                        <span class="text-muted mx-1">/</span>
+                        <span class="text-primary">&#x2193;{{ (s.bytes_received / 1024)|round(1) if s.bytes_received else 0 }}K</span>
+                    </small>
+                </td>
+                <td>
+                    <span class="badge bg-{{ 'danger' if s.disconnect_reason == 'admin_force' else 'warning' if s.disconnect_reason == 'timeout' or s.disconnect_reason == 'idle_timeout' else 'secondary' }}">
+                        {{ s.disconnect_reason | replace('_', ' ') | title if s.disconnect_reason else 'N/A' }}
+                    </span>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary toggle-detail"
+                            data-session-id="{{ s.id }}">Details</button>
+                </td>
+            </tr>
+            <tr class="session-detail bg-light" id="detail-{{ s.id }}" style="display:none">
+                <td colspan="9">
+                    <div class="p-2">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <strong>Connected:</strong> {{ s.connected_at.strftime('%Y-%m-%d %H:%M:%S') if s.connected_at else 'N/A' }}<br>
+                                <strong>Disconnected:</strong> {{ s.disconnected_at.strftime('%Y-%m-%d %H:%M:%S') if s.disconnected_at else 'N/A' }}
+                            </div>
+                            <div class="col-md-4">
+                                <strong>Bytes Sent:</strong> {{ (s.bytes_sent / 1024)|round(1) if s.bytes_sent else 0 }} KB<br>
+                                <strong>Bytes Received:</strong> {{ (s.bytes_received / 1024)|round(1) if s.bytes_received else 0 }} KB
+                            </div>
+                            <div class="col-md-4">
+                                <strong>Status:</strong> {{ s.status }}<br>
+                                <strong>Reason:</strong> {{ s.disconnect_reason or 'N/A' }}
+                            </div>
+                        </div>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-{% else %}
-<p class="text-muted">No session history.</p>
+
+<!-- Pagination -->
+{% if pages > 1 %}
+<nav>
+    <ul class="pagination justify-content-center">
+        <li class="page-item {{ 'disabled' if page <= 1 }}">
+            <a class="page-link" href="?page={{ page - 1 }}{% if search %}&search={{ search }}{% endif %}{% if reason_filter %}&reason={{ reason_filter }}{% endif %}">&laquo;</a>
+        </li>
+        {% for p in range(1, pages + 1) %}
+        <li class="page-item {{ 'active' if p == page }}">
+            <a class="page-link" href="?page={{ p }}{% if search %}&search={{ search }}{% endif %}{% if reason_filter %}&reason={{ reason_filter }}{% endif %}">{{ p }}</a>
+        </li>
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if page >= pages }}">
+            <a class="page-link" href="?page={{ page + 1 }}{% if search %}&search={{ search }}{% endif %}{% if reason_filter %}&reason={{ reason_filter }}{% endif %}">&raquo;</a>
+        </li>
+    </ul>
+</nav>
 {% endif %}
+
+{% else %}
+<p class="text-muted text-center py-4">No session history found.</p>
+{% endif %}
+
+<!-- Disconnect Modals -->
+{% for item in active_sessions %}
+{% set s = item.session %}
+{% set elapsed = item.elapsed %}
+<div class="modal fade" id="disconnectModal{{ s.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('api.disconnect_session', session_id=s.id) }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Force Disconnect</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <p>Disconnect <strong>{{ s.user.username if s.user else 'N/A' }}</strong>
+                       from <strong>{{ s.device.display_name or s.device.name if s.device else 'N/A' }}</strong>?</p>
+                    <p class="text-muted">Session #{{ s.id }} — active for
+                        {% if elapsed >= 3600 %}
+                        {{ elapsed // 3600 }}h {{ (elapsed % 3600) // 60 }}m.
+                        {% elif elapsed >= 60 %}
+                        {{ elapsed // 60 }}m {{ elapsed % 60 }}s.
+                        {% else %}
+                        {{ elapsed }}s.
+                        {% endif %}
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Force Disconnect</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAll(src) {
+    document.querySelectorAll('.session-checkbox').forEach(cb => { cb.checked = src.checked; });
+    updateBulkBtn();
+}
+function updateBulkBtn() {
+    document.getElementById('bulkDisconnectBtn').disabled =
+        document.querySelectorAll('.session-checkbox:checked').length === 0;
+}
+function bulkDisconnect() {
+    const checked = document.querySelectorAll('.session-checkbox:checked');
+    const container = document.getElementById('bulkSessionIds');
+    container.innerHTML = '';
+    checked.forEach(cb => {
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'session_ids'; input.value = cb.value;
+        container.appendChild(input);
+    });
+    document.getElementById('bulkDisconnectForm').submit();
+}
+document.querySelectorAll('.toggle-detail').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const row = document.getElementById('detail-' + this.dataset.sessionId);
+        if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+    });
+});
+</script>
 {% endblock %}
