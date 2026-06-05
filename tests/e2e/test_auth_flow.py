@@ -58,6 +58,39 @@ class TestRegistrationLoginLogout:
         assert user.email == 'newuser@example.com'
         assert user.full_name == 'New User'
 
+    def test_register_rejects_duplicate_username(self, client, app):
+        _register(client)
+        client.get('/auth/logout', follow_redirects=True)
+
+        resp = client.post('/auth/register', data={
+            'username': 'newuser',
+            'email': 'different@ex.com',
+            'full_name': 'Dupe',
+            'password': 'Pass1234',
+            'confirm_password': 'Pass1234',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'already taken' in resp.data.lower()
+
+    def test_register_rejects_duplicate_email(self, client, app):
+        _register(client)
+        client.get('/auth/logout', follow_redirects=True)
+
+        resp = client.post('/auth/register', data={
+            'username': 'different',
+            'email': 'newuser@example.com',
+            'full_name': 'Dupe',
+            'password': 'Pass1234',
+            'confirm_password': 'Pass1234',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'already registered' in resp.data.lower()
+
+    def test_register_shows_password_hints(self, client):
+        resp = client.get('/auth/register')
+        assert b'uppercase' in resp.data.lower()
+        assert b'digit' in resp.data.lower()
+
     def test_login_after_registration(self, client, app):
         _register(client)
         resp = _login(client)
