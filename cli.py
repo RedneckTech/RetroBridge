@@ -1,3 +1,6 @@
+import os
+import time
+
 import click
 from flask.cli import AppGroup
 
@@ -112,18 +115,96 @@ def register_cli_commands(app):
     def simulation_worker(device):
         """
         Launch a PTY-based simulation worker for testing without hardware.
-        Creates a pseudo-terminal that mimics a vintage machine, then runs
-        the job worker against it.
+        Creates a pseudo-terminal that mimics a vintage machine, updates the
+        device port to point to the PTY, and runs the job worker against it.
         """
-        click.echo(f'Simulation worker for {device} starting...')
-        click.echo('(PTY simulation engine not yet implemented — '
-                    'use "flask run-worker --device {device}" with real serial hardware)')
+        from retrobridge.simulation import create_job_simulation
+        from retrobridge.models import Device, DevicePort
+
+        click.echo(f'Creating PTY simulation for {device}...')
+        sim = create_job_simulation(device)
+
+        # Update the device's job_queue port dev_path to the PTY slave
+        device_obj = app.db_session.query(Device).filter_by(name=device).first()
+        if not device_obj:
+            click.echo(f'Device "{device}" not found in database.')
+            return
+
+        port = (
+            app.db_session.query(DevicePort)
+            .filter_by(device_id=device_obj.id, purpose='job_queue')
+            .first()
+        )
+        if not port:
+            click.echo(f'No job_queue port found for device "{device}".')
+            return
+
+        old_path = port.dev_path
+        port.dev_path = sim['slave_name']
+        app.db_session.commit()
+        click.echo(f'Port dev_path updated: {old_path} -> {sim["slave_name"]}')
+
+        try:
+            click.echo(f'Starting worker for {device}...')
+            import subprocess
+            worker_script = os.path.join(os.path.dirname(__file__), 'worker.py')
+            subprocess.run(
+                ['python3', worker_script, '--device', device, '--poll-interval', '3'],
+                cwd=os.path.dirname(__file__),
+            )
+        finally:
+            port.dev_path = old_path
+            app.db_session.commit()
+            sim['stop_event'].set()
+            sim['thread'].join(timeout=2)
+            click.echo('Simulation shut down.')
 
     @app.cli.command('simulation-terminal')
     @click.option('--device', required=True, help='Device name (centurion or pdp11)')
     def simulation_terminal(device):
         """
-        Launch a PTY-based interactive terminal simulation for testing without hardware.
+        Launch a PTY-based interactive terminal simulation for testing.
+        Creates a pseudo-terminal that mimics a vintage multi-user OS,
+        updates the interactive port to point to the PTY, and keeps
+        running until Ctrl+C.
         """
-        click.echo(f'Simulation terminal for {device} starting...')
-        click.echo('(PTY simulation engine not yet implemented)')
+        from retrobridge.simulation import create_terminal_simulation
+        from retrobridge.models import Device, DevicePort
+
+        click.echo(f'Creating PTY terminal simulation for {device}...')
+        sim = create_terminal_simulation(device)
+
+        # Update the device's interactive port dev_path to the PTY slave
+        device_obj = app.db_session.query(Device).filter_by(name=device).first()
+        if not device_obj:
+            click.echo(f'Device "{device}" not found in database.')
+            return
+
+        port = (
+            app.db_session.query(DevicePort)
+            .filter_by(device_id=device_obj.id, purpose='interactive')
+            .first()
+        )
+        if not port:
+            click.echo(f'No interactive port found for device "{device}".')
+            return
+
+        old_path = port.dev_path
+        port.dev_path = sim['slave_name']
+        app.db_session.commit()
+        click.echo(f'Port dev_path updated: {old_path} -> {sim["slave_name"]}')
+        click.echo(f'\nPTY terminal simulation running.')
+        click.echo(f'Connect via the web UI at http://127.0.0.1:5000/terminal/{device_obj.id}')
+        click.echo(f'Press Ctrl+C to stop.\n')
+
+        try:
+            while sim['thread'].is_alive():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            port.dev_path = old_path
+            app.db_session.commit()
+            sim['stop_event'].set()
+            sim['thread'].join(timeout=2)
+            click.echo('Simulation shut down.')
