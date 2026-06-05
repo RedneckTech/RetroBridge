@@ -2,7 +2,7 @@ from flask import jsonify, request
 from flask_login import login_required, current_user
 
 from retrobridge.api import api_bp
-from retrobridge.models import Job, Device, DevicePort, TerminalSession
+from retrobridge.models import Job, Device, DevicePort, TerminalSession, User
 
 
 @api_bp.route('/jobs')
@@ -252,3 +252,17 @@ def delete_user(user_id):
     current_app.db_session.delete(user)
     current_app.db_session.commit()
     return jsonify({'success': True})
+
+
+@api_bp.route('/check-username')
+def check_username():
+    """Check if a username is available. Public endpoint (no auth needed)."""
+    from flask import current_app
+    username = request.args.get('username', '').strip()
+    if not username or len(username) < 2:
+        return jsonify({'available': False, 'message': 'Too short'})
+    existing = current_app.db_session.query(User).filter_by(
+        username=username).first()
+    if existing:
+        return jsonify({'available': False, 'message': 'Username taken'})
+    return jsonify({'available': True, 'message': 'Available'})

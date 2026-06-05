@@ -89,6 +89,20 @@ def register():
 
     form = RegistrationForm()
     if form.validate_on_submit():
+        # Check for duplicate username
+        existing_user = current_app.db_session.query(User).filter_by(
+            username=form.username.data).first()
+        if existing_user:
+            form.username.errors.append('This username is already taken.')
+            return render_template('auth/register.html', form=form)
+
+        # Check for duplicate email
+        existing_email = current_app.db_session.query(User).filter_by(
+            email=form.email.data).first()
+        if existing_email:
+            form.email.errors.append('This email is already registered.')
+            return render_template('auth/register.html', form=form)
+
         user = User(
             username=form.username.data,
             email=form.email.data,

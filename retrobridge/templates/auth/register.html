@@ -4,21 +4,23 @@
 <div class="row justify-content-center">
     <div class="col-md-6 col-lg-4">
         <h2 class="mb-4">Register</h2>
-        <form method="POST">
+        <form method="POST" id="registerForm">
             {{ form.hidden_tag() }}
             <div class="mb-3">
                 {{ form.username.label(class="form-label") }}
-                {{ form.username(class="form-control" + (" is-invalid" if form.username.errors else "")) }}
-                {% for error in form.username.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
+                {{ form.username(class="form-control", id="usernameField") }}
+                <div class="invalid-feedback" id="usernameError">
+                    {% for error in form.username.errors %}{{ error }}{% endfor %}
+                </div>
+                <div class="valid-feedback" id="usernameOk" style="display:none">Available</div>
+                <div class="form-text" id="usernameChecking" style="display:none">Checking...</div>
             </div>
             <div class="mb-3">
                 {{ form.email.label(class="form-label") }}
-                {{ form.email(class="form-control" + (" is-invalid" if form.email.errors else "")) }}
-                {% for error in form.email.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
+                {{ form.email(class="form-control", id="emailField") }}
+                <div class="invalid-feedback" id="emailError">
+                    {% for error in form.email.errors %}{{ error }}{% endfor %}
+                </div>
             </div>
             <div class="mb-3">
                 {{ form.full_name.label(class="form-label") }}
@@ -26,17 +28,25 @@
             </div>
             <div class="mb-3">
                 {{ form.password.label(class="form-label") }}
-                {{ form.password(class="form-control" + (" is-invalid" if form.password.errors else "")) }}
-                {% for error in form.password.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
+                {{ form.password(class="form-control", id="passwordField") }}
+                <div class="invalid-feedback" id="passwordError">
+                    {% for error in form.password.errors %}{{ error }}{% endfor %}
+                </div>
+                <div class="form-text">
+                    <span id="pwLen" class="text-danger">&#x2717;</span> 8+ characters
+                    <span class="mx-1">|</span>
+                    <span id="pwUpper" class="text-danger">&#x2717;</span> 1 uppercase
+                    <span class="mx-1">|</span>
+                    <span id="pwDigit" class="text-danger">&#x2717;</span> 1 digit
+                </div>
             </div>
             <div class="mb-3">
                 {{ form.confirm_password.label(class="form-label") }}
-                {{ form.confirm_password(class="form-control" + (" is-invalid" if form.confirm_password.errors else "")) }}
-                {% for error in form.confirm_password.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
+                {{ form.confirm_password(class="form-control", id="confirmPasswordField") }}
+                <div class="invalid-feedback" id="confirmError">
+                    {% for error in form.confirm_password.errors %}{{ error }}{% endfor %}
+                </div>
+                <div class="valid-feedback" id="confirmOk" style="display:none">Passwords match</div>
             </div>
             {{ form.submit(class="btn btn-primary w-100") }}
         </form>
@@ -45,4 +55,131 @@
         </p>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const usernameField = document.getElementById('usernameField');
+    const usernameError = document.getElementById('usernameError');
+    const usernameOk = document.getElementById('usernameOk');
+    const usernameChecking = document.getElementById('usernameChecking');
+    const passwordField = document.getElementById('passwordField');
+    const passwordError = document.getElementById('passwordError');
+    const confirmField = document.getElementById('confirmPasswordField');
+    const confirmError = document.getElementById('confirmError');
+    const confirmOk = document.getElementById('confirmOk');
+    const pwLen = document.getElementById('pwLen');
+    const pwUpper = document.getElementById('pwUpper');
+    const pwDigit = document.getElementById('pwDigit');
+
+    // Username availability check (debounced)
+    let checkTimer;
+    usernameField.addEventListener('input', function() {
+        clearTimeout(checkTimer);
+        const val = this.value.trim();
+
+        if (val.length < 2) {
+            usernameError.textContent = '';
+            usernameError.style.display = 'none';
+            usernameOk.style.display = 'none';
+            usernameChecking.style.display = 'none';
+            this.classList.remove('is-invalid', 'is-valid');
+            return;
+        }
+
+        usernameChecking.style.display = 'block';
+        usernameOk.style.display = 'none';
+        usernameError.style.display = 'none';
+        this.classList.remove('is-invalid', 'is-valid');
+
+        checkTimer = setTimeout(function() {
+            fetch('/api/check-username?username=' + encodeURIComponent(val))
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    usernameChecking.style.display = 'none';
+                    if (data.available) {
+                        usernameOk.style.display = 'block';
+                        usernameError.style.display = 'none';
+                        usernameField.classList.remove('is-invalid');
+                        usernameField.classList.add('is-valid');
+                    } else {
+                        usernameError.textContent = 'This username is already taken.';
+                        usernameError.style.display = 'block';
+                        usernameOk.style.display = 'none';
+                        usernameField.classList.remove('is-valid');
+                        usernameField.classList.add('is-invalid');
+                    }
+                });
+        }, 400);
+    });
+
+    // Password real-time validation
+    passwordField.addEventListener('input', function() {
+        var pw = this.value;
+        var lenOk = pw.length >= 8;
+        var upperOk = /[A-Z]/.test(pw);
+        var digitOk = /[0-9]/.test(pw);
+        var allOk = lenOk && upperOk && digitOk;
+
+        pwLen.innerHTML = lenOk ? '&#x2713;' : '&#x2717;';
+        pwLen.className = lenOk ? 'text-success' : 'text-danger';
+        pwUpper.innerHTML = upperOk ? '&#x2713;' : '&#x2717;';
+        pwUpper.className = upperOk ? 'text-success' : 'text-danger';
+        pwDigit.innerHTML = digitOk ? '&#x2713;' : '&#x2717;';
+        pwDigit.className = digitOk ? 'text-success' : 'text-danger';
+
+        if (pw.length === 0) {
+            passwordError.style.display = 'none';
+            this.classList.remove('is-invalid', 'is-valid');
+        } else if (allOk) {
+            passwordError.style.display = 'none';
+            this.classList.remove('is-invalid');
+            this.classList.add('is-valid');
+        } else {
+            this.classList.remove('is-valid');
+            this.classList.add('is-invalid');
+        }
+    });
+
+    // Confirm password real-time check
+    confirmField.addEventListener('input', function() {
+        if (this.value.length === 0) {
+            confirmError.style.display = 'none';
+            confirmOk.style.display = 'none';
+            this.classList.remove('is-invalid', 'is-valid');
+        } else if (this.value === passwordField.value) {
+            confirmError.style.display = 'none';
+            confirmOk.style.display = 'block';
+            this.classList.remove('is-invalid');
+            this.classList.add('is-valid');
+        } else {
+            confirmError.textContent = 'Passwords do not match.';
+            confirmError.style.display = 'block';
+            confirmOk.style.display = 'none';
+            this.classList.remove('is-valid');
+            this.classList.add('is-invalid');
+        }
+    });
+
+    // Show server-side errors on page load (after a failed submit)
+    function showServerError(field, errorEl) {
+        if (errorEl && errorEl.textContent.trim()) {
+            field.classList.add('is-invalid');
+            errorEl.style.display = 'block';
+        }
+    }
+    showServerError(usernameField, usernameError);
+    showServerError(passwordField, passwordError);
+    showServerError(confirmField, confirmError);
+
+    // Also check password field state on load for the checklist
+    if (passwordField.value) {
+        passwordField.dispatchEvent(new Event('input'));
+    }
+    if (confirmField.value) {
+        confirmField.dispatchEvent(new Event('input'));
+    }
+})();
+</script>
 {% endblock %}
