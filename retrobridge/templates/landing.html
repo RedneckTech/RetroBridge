@@ -10,8 +10,13 @@
         on real vintage hardware — all from your browser.
     </p>
     <div class="d-grid gap-2 d-sm-flex justify-content-sm-center mt-4">
+        {% if current_user.is_authenticated %}
+        <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-primary btn-lg px-4 gap-3">Go to Dashboard</a>
+        <a href="{{ url_for('terminal.index') }}" class="btn btn-outline-secondary btn-lg px-4">Open Terminal</a>
+        {% else %}
         <a href="{{ url_for('auth.login') }}" class="btn btn-primary btn-lg px-4 gap-3">Log In</a>
         <a href="{{ url_for('auth.register') }}" class="btn btn-outline-secondary btn-lg px-4">Register</a>
+        {% endif %}
     </div>
 </div>
 
@@ -94,8 +99,13 @@
 </div>
 
 <div class="text-center my-5">
+    {% if current_user.is_authenticated %}
+    <p class="text-muted">Ready to get started?</p>
+    <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-primary btn-lg">Go to Dashboard</a>
+    {% else %}
     <p class="text-muted">Ready to get started?</p>
     <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg">Create an Account</a>
+    {% endif %}
 </div>
 
 {% endblock %}
