@@ -10,6 +10,11 @@ class BaseConfig:
     REMEMBER_COOKIE_DURATION = timedelta(hours=24)
     WTF_CSRF_ENABLED = True
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB default
+
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    PERMANENT_SESSION_LIFETIME = timedelta(hours=12)
     SQLALCHEMY_ENGINE_POOLCLASS = 'NullPool'
     SQLALCHEMY_ENGINE_OPTIONS = {
         'connect_args': {
@@ -26,6 +31,7 @@ class BaseConfig:
 class DevConfig(BaseConfig):
     DEBUG = True
     TESTING = False
+    SESSION_COOKIE_SECURE = False
     SOCKETIO_ASYNC_MODE = 'threading'
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         'DATABASE_URL',
@@ -36,6 +42,7 @@ class DevConfig(BaseConfig):
 class TestConfig(BaseConfig):
     DEBUG = False
     TESTING = True
+    SESSION_COOKIE_SECURE = False
     SOCKETIO_ASYNC_MODE = 'threading'
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     SQLALCHEMY_ENGINE_POOLCLASS = 'StaticPool'

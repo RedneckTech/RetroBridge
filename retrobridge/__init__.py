@@ -46,6 +46,7 @@ def create_app(config=None):
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
     login_manager.login_message_category = 'warning'
+    login_manager.session_protection = 'strong'
 
     socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet'))
     socketio._flask_app = app

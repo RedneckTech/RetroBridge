@@ -137,6 +137,16 @@ class TerminalSession(Base):
     port = relationship('DevicePort', back_populates='terminal_sessions')
 
 
+class LoginAttempt(Base):
+    __tablename__ = 'login_attempts'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ip_address = Column(String(45), nullable=False, index=True)
+    username = Column(String(64), nullable=True, index=True)
+    success = Column(Boolean, default=False, nullable=False)
+    attempted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class AdminSetting(Base):
     __tablename__ = 'admin_settings'
 
