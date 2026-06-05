@@ -52,10 +52,7 @@ def create_app(config=None):
 
     @app.route('/')
     def landing():
-        from flask import render_template, redirect, url_for
-        from flask_login import current_user
-        if current_user.is_authenticated:
-            return redirect(url_for('jobs.dashboard'))
+        from flask import render_template
         return render_template('landing.html')
 
     from retrobridge.auth.routes import auth_bp
