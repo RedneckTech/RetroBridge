@@ -3,6 +3,7 @@ from flask_login import current_user
 from flask_socketio import emit, disconnect
 
 from retrobridge.models import Device, DevicePort, TerminalSession
+from retrobridge.terminal import utils
 
 
 def register_socketio_events(socketio):
@@ -13,10 +14,16 @@ def register_socketio_events(socketio):
 
     @socketio.on('disconnect', namespace='/terminal')
     def handle_disconnect():
-        pass
+        from flask_socketio import request as socket_request
+        sid = getattr(socket_request, 'sid', None)
+        if sid:
+            utils.stop_bridge(socketio, sid, reason='user_disconnect')
 
     @socketio.on('request_session', namespace='/terminal')
     def handle_request_session(data):
+        from flask_socketio import request as socket_request
+        sid = getattr(socket_request, 'sid', None)
+
         if not current_user.is_authenticated:
             emit('session_denied', {'reason': 'Not authenticated'})
             return
@@ -37,6 +44,11 @@ def register_socketio_events(socketio):
             emit('session_denied', {'reason': 'Maximum terminal sessions reached'})
             return
 
+        # Check if this sid already has an active bridge
+        if utils._active_bridges.get(sid, {}).get('running'):
+            emit('session_denied', {'reason': 'Session already active on this connection'})
+            return
+
         # Find available interactive port
         interactive_ports = (
             current_app.db_session.query(DevicePort)
@@ -46,12 +58,7 @@ def register_socketio_events(socketio):
 
         available_port = None
         for port in interactive_ports:
-            active = (
-                current_app.db_session.query(TerminalSession)
-                .filter_by(port_id=port.id, status='active')
-                .first()
-            )
-            if not active:
+            if utils.allocate_port(port):
                 available_port = port
                 break
 
@@ -60,14 +67,21 @@ def register_socketio_events(socketio):
             return
 
         # Create session record
-        session = TerminalSession(
-            user_id=current_user.id,
-            device_id=device_id,
-            port_id=available_port.id,
-            status='active',
+        session = utils.create_session(
+            current_app.db_session,
+            current_user.id,
+            device_id,
+            available_port.id,
         )
-        current_app.db_session.add(session)
-        current_app.db_session.commit()
+
+        # Start the serial bridge
+        success = utils.start_bridge(socketio, sid, session, available_port)
+        if not success:
+            utils.end_session(current_app.db_session, session.id, reason='error')
+            emit('session_denied', {
+                'reason': f'Could not open serial port: {available_port.dev_path}'
+            })
+            return
 
         emit('session_granted', {
             'session_id': session.id,
@@ -79,13 +93,30 @@ def register_socketio_events(socketio):
 
     @socketio.on('terminal_input', namespace='/terminal')
     def handle_terminal_input(data):
-        # Will write data to serial port once serial bridge is implemented
-        pass
+        from flask_socketio import request as socket_request
+        sid = getattr(socket_request, 'sid', None)
+        if sid:
+            utils.write_to_serial(sid, data.get('data', ''))
 
     @socketio.on('terminal_resize', namespace='/terminal')
     def handle_terminal_resize(data):
-        pass
+        cols = data.get('cols', 80)
+        rows = data.get('rows', 24)
+        # Could send SIGWINCH-equivalent escape sequence to vintage OS
+        # For now this is cosmetic on the client side
 
     @socketio.on('heartbeat', namespace='/terminal')
     def handle_heartbeat():
+        from flask_socketio import request as socket_request
+        sid = getattr(socket_request, 'sid', None)
+        if sid:
+            bridge = utils._active_bridges.get(sid)
+            if bridge and bridge['running']:
+                bridge['last_activity'] = time.time()
         emit('heartbeat_ack')
+
+    # Start the timeout monitor
+    utils.start_timeout_monitor(socketio)
+
+
+import time  # noqa: E402
