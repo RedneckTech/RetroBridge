@@ -32,9 +32,11 @@ class TestTerminalSimulation:
         try:
             assert sim['slave_name'].startswith('/dev/pts/')
             assert sim['master_fd'] > 0
-            assert sim['thread'].is_alive()
+            # Open slave so the simulation thread doesn't block on full buffer
+            slave = open(sim['slave_name'], 'r+b', buffering=0)
             time.sleep(1)
             assert sim['thread'].is_alive()
+            slave.close()
         finally:
             sim['stop_event'].set()
             sim['thread'].join(timeout=2)

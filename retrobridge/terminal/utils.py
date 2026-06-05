@@ -94,10 +94,10 @@ def _serial_reader(socketio, sid, ser, session_id):
                     bridge['last_activity'] = time.time()
             else:
                 time.sleep(0.05)
-        except SerialException as e:
+        except (SerialException, OSError) as e:
             logger.error(f'Serial read error for session {session_id}: {e}')
             bridge['running'] = False
-            socketio.emit('session_closed', {'reason': f'Serial error: {e}'},
+            socketio.emit('session_closed', {'reason': f'Connection lost: {e}'},
                           namespace='/terminal', to=sid)
             break
         except Exception as e:
@@ -114,6 +114,15 @@ def start_bridge(socketio, sid, session, port):
         try:
             params = get_serial_params(port)
             ser = Serial(**params)
+            # Disable local echo on the PTY slave to prevent feedback loops
+            try:
+                import termios
+                fd = ser.fileno()
+                attrs = termios.tcgetattr(fd)
+                attrs[3] = attrs[3] & ~termios.ECHO   # lflags: disable ECHO
+                termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            except Exception:
+                pass
         except SerialException as e:
             logger.error(f'Cannot open serial port {port.dev_path}: {e}')
             return False

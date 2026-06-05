@@ -1,9 +1,13 @@
-from flask import current_app
+from flask import current_app, request
 from flask_login import current_user
 from flask_socketio import emit, disconnect
 
 from retrobridge.models import Device, DevicePort, TerminalSession
 from retrobridge.terminal import utils
+
+
+def _get_sid():
+    return getattr(request, 'sid', None)
 
 
 def register_socketio_events(socketio):
@@ -13,16 +17,14 @@ def register_socketio_events(socketio):
             return False
 
     @socketio.on('disconnect', namespace='/terminal')
-    def handle_disconnect():
-        from flask_socketio import request as socket_request
-        sid = getattr(socket_request, 'sid', None)
+    def handle_disconnect(reason=None):
+        sid = _get_sid()
         if sid:
             utils.stop_bridge(socketio, sid, reason='user_disconnect')
 
     @socketio.on('request_session', namespace='/terminal')
     def handle_request_session(data):
-        from flask_socketio import request as socket_request
-        sid = getattr(socket_request, 'sid', None)
+        sid = _get_sid()
 
         if not current_user.is_authenticated:
             emit('session_denied', {'reason': 'Not authenticated'})
@@ -93,22 +95,17 @@ def register_socketio_events(socketio):
 
     @socketio.on('terminal_input', namespace='/terminal')
     def handle_terminal_input(data):
-        from flask_socketio import request as socket_request
-        sid = getattr(socket_request, 'sid', None)
+        sid = _get_sid()
         if sid:
             utils.write_to_serial(sid, data.get('data', ''))
 
     @socketio.on('terminal_resize', namespace='/terminal')
     def handle_terminal_resize(data):
-        cols = data.get('cols', 80)
-        rows = data.get('rows', 24)
-        # Could send SIGWINCH-equivalent escape sequence to vintage OS
-        # For now this is cosmetic on the client side
+        pass
 
     @socketio.on('heartbeat', namespace='/terminal')
-    def handle_heartbeat():
-        from flask_socketio import request as socket_request
-        sid = getattr(socket_request, 'sid', None)
+    def handle_heartbeat(data=None):
+        sid = _get_sid()
         if sid:
             bridge = utils._active_bridges.get(sid)
             if bridge and bridge['running']:

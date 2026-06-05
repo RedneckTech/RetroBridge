@@ -20,7 +20,7 @@ Terminal Simulation:
 import os
 import pty
 import select
-import signal
+import termios
 import threading
 import time
 
@@ -167,39 +167,44 @@ def create_terminal_simulation(device_name='centurion'):
     master_fd, slave_fd = pty.openpty()
     slave_name = os.ttyname(slave_fd)
 
+    # Disable echo on the slave so prompts don't feedback-loop
+    attrs = termios.tcgetattr(slave_fd)
+    attrs[3] = attrs[3] & ~termios.ECHO
+    termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+
     stop_event = threading.Event()
 
     def simulate():
         try:
-            os.write(master_fd, device_config['banner'].encode())
-            time.sleep(0.5)
-            os.write(master_fd, b'USERNAME: ')
-
-            buffer = b''
-            login_complete = False
-
             while not stop_event.is_set():
-                rfds, _, _ = select.select([master_fd], [], [], 0.5)
-                if not rfds:
-                    continue
+                # Show banner and login prompt
+                os.write(master_fd, device_config['banner'].encode())
+                time.sleep(0.3)
+                os.write(master_fd, b'USERNAME: ')
 
-                try:
-                    chunk = os.read(master_fd, 1024)
-                except OSError:
-                    break
+                buffer = b''
+                cmd = ''
+                login_complete = False
 
-                if not chunk:
-                    break
+                while not stop_event.is_set() and not login_complete:
+                    rfds, _, _ = select.select([master_fd], [], [], 0.5)
+                    if not rfds:
+                        continue
 
-                if not login_complete:
+                    try:
+                        chunk = os.read(master_fd, 1024)
+                    except OSError:
+                        return
+
+                    if not chunk:
+                        return
+
                     buffer += chunk
                     os.write(master_fd, chunk)
 
-                    # Check for password prompt trigger
                     if b'\r' in chunk or b'\n' in chunk:
                         os.write(master_fd, b'\r\nPASSWORD: ')
                         buffer = b''
-                        # Wait for password input
                         while not stop_event.is_set():
                             rfds, _, _ = select.select([master_fd], [], [], 0.5)
                             if rfds:
@@ -208,14 +213,26 @@ def create_terminal_simulation(device_name='centurion'):
                                 if b'\r' in pw_chunk or b'\n' in pw_chunk:
                                     break
                         os.write(master_fd, b'\r\n')
-                        time.sleep(0.5)
+                        time.sleep(0.3)
                         os.write(master_fd, f'\r\nWelcome to {device_name.upper()}!\r\n\r\n'.encode())
                         os.write(master_fd, device_config['prompt'].encode())
                         login_complete = True
-                        buffer = b''
+
+                # Command shell loop
+                buffer = b''
+                while not stop_event.is_set() and login_complete:
+                    rfds, _, _ = select.select([master_fd], [], [], 0.5)
+                    if not rfds:
                         continue
-                else:
-                    # Echo characters back
+
+                    try:
+                        chunk = os.read(master_fd, 1024)
+                    except OSError:
+                        return
+
+                    if not chunk:
+                        return
+
                     for byte in chunk:
                         cb = bytes([byte])
                         if cb == b'\r' or cb == b'\n':
@@ -228,10 +245,12 @@ def create_terminal_simulation(device_name='centurion'):
                                     cmd, f'\r\n  ?UNKNOWN COMMAND: {cmd.upper()}\r\n'
                                 )
                                 os.write(master_fd, response.encode())
-                                if cmd == 'logout':
-                                    time.sleep(1)
-                                    stop_event.set()
-                                    break
+
+                            if cmd == 'logout':
+                                time.sleep(1)
+                                os.write(master_fd, b'\r\nDisconnected.\r\n')
+                                login_complete = False
+                                break
 
                             os.write(master_fd, device_config['prompt'].encode())
                         elif cb == b'\x7f' or cb == b'\x08':
@@ -246,6 +265,10 @@ def create_terminal_simulation(device_name='centurion'):
         finally:
             try:
                 os.close(master_fd)
+            except OSError:
+                pass
+            try:
+                os.close(slave_fd)
             except OSError:
                 pass
 
@@ -276,6 +299,11 @@ def create_job_simulation(device_name='centurion'):
     """
     master_fd, slave_fd = pty.openpty()
     slave_name = os.ttyname(slave_fd)
+
+    # Disable echo on the slave
+    attrs = termios.tcgetattr(slave_fd)
+    attrs[3] = attrs[3] & ~termios.ECHO
+    termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
 
     stop_event = threading.Event()
 
@@ -338,6 +366,10 @@ def create_job_simulation(device_name='centurion'):
         finally:
             try:
                 os.close(master_fd)
+            except OSError:
+                pass
+            try:
+                os.close(slave_fd)
             except OSError:
                 pass
 
