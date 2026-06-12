@@ -26,6 +26,9 @@ class BaseConfig:
     OUTPUT_DIR = os.path.join(basedir, 'outputs')
     SESSION_LOG_DIR = os.path.join(basedir, 'session_logs')
     LOG_DIR = os.path.join(basedir, 'logs')
+    BACKUP_DIR = os.path.join(basedir, 'backups')
+    BACKUP_RETENTION_DAYS = int(os.environ.get('BACKUP_RETENTION_DAYS', '30'))
+    BACKUP_RETENTION_COUNT = int(os.environ.get('BACKUP_RETENTION_COUNT', '10'))
 
 
 class DevConfig(BaseConfig):
