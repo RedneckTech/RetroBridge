@@ -5,6 +5,27 @@ import click
 from flask.cli import AppGroup
 
 
+def _human_size(bytes_val):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if bytes_val < 1024:
+            return f'{bytes_val:.1f} {unit}'
+        bytes_val /= 1024
+    return f'{bytes_val:.1f} TB'
+
+
+def _auto_backup(app):
+    from retrobridge.backup import backup_database
+    db_uri = app.config['SQLALCHEMY_DATABASE_URI']
+    backup_dir = app.config.get('BACKUP_DIR',
+                                 os.path.join(os.path.dirname(__file__), 'backups'))
+    backup_dir = os.path.abspath(backup_dir)
+    try:
+        path = backup_database(db_uri, backup_dir, compress=True, label='pre-init')
+        click.echo(f'Auto-backup before init: {path}')
+    except FileNotFoundError:
+        pass
+
+
 def register_cli_commands(app):
     db_cli = AppGroup('db')
 
@@ -14,10 +35,64 @@ def register_cli_commands(app):
         Base.metadata.create_all(bind=app.db_engine)
         click.echo('Database tables created.')
 
+    @db_cli.command('backup')
+    @click.option('--no-compress', is_flag=True, help='Skip gzip compression')
+    @click.option('--label', default=None, help='Optional label embedded in filename')
+    def db_backup(no_compress, label):
+        from retrobridge.backup import backup_database, prune_backups, list_backups
+
+        db_uri = app.config['SQLALCHEMY_DATABASE_URI']
+        backup_dir = app.config.get('BACKUP_DIR', os.path.join(app.instance_path, '..', 'backups'))
+        backup_dir = os.path.abspath(backup_dir)
+
+        os.makedirs(backup_dir, exist_ok=True)
+        path = backup_database(db_uri, backup_dir, compress=not no_compress, label=label)
+
+        size = os.path.getsize(path)
+        click.echo(f'Backup created: {path} ({_human_size(size)})')
+
+        retention_days = app.config.get('BACKUP_RETENTION_DAYS', 30)
+        retention_count = app.config.get('BACKUP_RETENTION_COUNT', 10)
+        removed = prune_backups(backup_dir, retention_days, retention_count)
+        for r in removed:
+            click.echo(f'  Pruned old backup: {os.path.basename(r)}')
+
+    @db_cli.command('restore')
+    @click.argument('backup_path', type=click.Path(exists=True))
+    @click.confirmation_option(prompt='This will OVERWRITE the current database. Continue?')
+    def db_restore(backup_path):
+        from retrobridge.backup import restore_database
+
+        db_uri = app.config['SQLALCHEMY_DATABASE_URI']
+        path = restore_database(backup_path, db_uri)
+        click.echo(f'Database restored from: {backup_path}')
+        click.echo(f'Target database: {path}')
+
+    @db_cli.command('list-backups')
+    @click.option('--human-readable', '-h', is_flag=True, help='Show sizes in human-readable format')
+    def db_list_backups(human_readable):
+        from retrobridge.backup import list_backups
+
+        backup_dir = app.config.get('BACKUP_DIR', os.path.join(app.instance_path, '..', 'backups'))
+        backup_dir = os.path.abspath(backup_dir)
+
+        backups = list_backups(backup_dir)
+        if not backups:
+            click.echo('No backups found.')
+            return
+
+        click.echo(f'{"Filename":<50} {"Size":>10}  {"Modified (UTC)":<20}')
+        click.echo('-' * 82)
+        for b in backups:
+            size = _human_size(b['size_bytes']) if human_readable else str(b['size_bytes'])
+            click.echo(f'{b["filename"]:<50} {size:>10}  {b["modified"].strftime("%Y-%m-%d %H:%M:%S"):<20}')
+        click.echo(f'\n{len(backups)} backup(s) in {backup_dir}')
+
     app.cli.add_command(db_cli)
 
     @app.cli.command('init-db')
     def init_db_alias():
+        _auto_backup(app)
         from retrobridge.models import Base
         Base.metadata.create_all(bind=app.db_engine)
         click.echo('Database tables created.')

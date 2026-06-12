@@ -121,6 +121,7 @@ def create_app(config=None):
     os.makedirs(app.config.get('OUTPUT_DIR', 'outputs'), exist_ok=True)
     os.makedirs(app.config.get('SESSION_LOG_DIR', 'session_logs'), exist_ok=True)
     os.makedirs(app.config.get('LOG_DIR', 'logs'), exist_ok=True)
+    os.makedirs(app.config.get('BACKUP_DIR', 'backups'), exist_ok=True)
 
     return app
 
