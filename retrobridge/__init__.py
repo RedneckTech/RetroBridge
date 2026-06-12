@@ -37,6 +37,10 @@ def create_app(config=None):
     engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'],
                            connect_args=app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('connect_args', {}),
                            poolclass=poolclass)
+
+    from retrobridge.sqlite_provision import configure_sqlite_engine
+    configure_sqlite_engine(engine, app.config)
+
     session_factory = sessionmaker(bind=engine)
     app.db_session = scoped_session(session_factory)
     app.db_engine = engine

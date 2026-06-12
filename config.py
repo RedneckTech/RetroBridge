@@ -60,3 +60,12 @@ class ProdConfig(BaseConfig):
         'DATABASE_URL',
         f'sqlite:///{os.path.join(basedir, "instance", "retrobridge.db")}',
     )
+    SQLITE_PRAGMAS = {
+        'journal_mode': 'WAL',
+        'synchronous': 'NORMAL',
+        'busy_timeout': 5000,
+        'mmap_size': 268435456,
+        'cache_size': -64000,
+        'foreign_keys': 'ON',
+        'temp_store': 'MEMORY',
+    }
