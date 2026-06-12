@@ -56,10 +56,15 @@ def build_engine():
     if not str(db_path).startswith('sqlite:///'):
         db_path = f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}'
 
-    return create_engine(
+    engine = create_engine(
         db_path,
         connect_args={'timeout': 10},
     )
+
+    from retrobridge.sqlite_provision import configure_sqlite_engine
+    configure_sqlite_engine(engine)
+
+    return engine
 
 
 def setup_logging(device_name):
