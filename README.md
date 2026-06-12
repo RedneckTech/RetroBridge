@@ -18,6 +18,8 @@ Currently targets the **Centurion CPU-6** and **DEC PDP-11/44**, both multi-user
 - **PTY-based simulation** — Develop and test without hardware using built-in pseudo-terminal simulation for both job processing and terminal sessions
 - **Role-based access control** — Regular users manage their own jobs and sessions; admins have full control
 - **Audit logging** — Every byte sent and received on job ports is timestamped; optional keystroke logging for terminal sessions
+- **Health check endpoints** — Liveness (`GET /health`) and readiness (`GET /ready`) probes for load balancers and container orchestration
+- **SQLite backup system** — CLI commands for online backup/restore with automatic pruning and a standalone cron script
 
 ---
 
@@ -93,6 +95,34 @@ flask simulation-worker --device centurion
 flask simulation-terminal --device centurion
 ```
 
+### Database Backups
+
+```bash
+# Create a compressed backup with automatic pruning
+flask db backup
+
+# Uncompressed backup with a custom label
+flask db backup --no-compress --label before-upgrade
+
+# List existing backups with human-readable sizes
+flask db list-backups -h
+
+# Restore from a backup (requires confirmation)
+flask db restore /path/to/backup.db.gz
+```
+
+A standalone cron-friendly script is also available:
+```
+0 3 * * * /srv/retrobridge/venv/bin/python /srv/retrobridge/deploy/backup.py
+```
+
+### Health Check Endpoints
+
+| Endpoint       | Purpose       | Returns                                          |
+| -------------- | ------------- | ------------------------------------------------ |
+| `GET /health`  | Liveness      | `200 {"status": "ok"}`                           |
+| `GET /ready`   | Readiness     | `200` with per-check detail, or `503` degraded   |
+
 ### Default Admin Login
 
 After running `flask seed`:
@@ -132,12 +162,15 @@ Directory layout on disk:
 ```
 /srv/retrobridge/
 ├── retrobridge/        # Application package
+├── deploy/             # Production deployment scripts
+│   └── backup.py       # Standalone cron backup script
 ├── worker.py           # Worker daemon
 ├── cli.py              # Flask CLI commands
 ├── config.py           # Configuration classes
 ├── requirements.txt
 ├── wsgi.py             # Gunicorn entry point
 ├── instance/           # SQLite database (auto-created)
+├── backups/            # Database backups (auto-created)
 ├── uploads/            # User program uploads
 ├── outputs/            # Job session capture logs
 └── logs/               # Application and worker logs
