@@ -62,6 +62,7 @@ def create_app(config=None):
     from retrobridge.api.routes import api_bp
     from retrobridge.terminal.routes import terminal_bp
     from retrobridge.admin.routes import admin_bp
+    from retrobridge.health import health_bp
     from retrobridge.terminal.events import register_socketio_events
 
     app.register_blueprint(auth_bp, url_prefix='/auth')
@@ -69,6 +70,7 @@ def create_app(config=None):
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(terminal_bp, url_prefix='/terminal')
     app.register_blueprint(admin_bp, url_prefix='/admin')
+    app.register_blueprint(health_bp)
 
     register_socketio_events(socketio)
 
@@ -103,7 +105,7 @@ def create_app(config=None):
     def check_maintenance():
         if request.endpoint in ('auth.login', 'auth.logout', 'static'):
             return
-        if request.blueprint == 'admin':
+        if request.blueprint in ('admin', 'health'):
             return
         from retrobridge.admin.settings_utils import get_bool
         if get_bool('MAINTENANCE_MODE'):
