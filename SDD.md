@@ -73,8 +73,9 @@
    - 10.1 [Unit Tests](#101-unit-tests-testsunit)
    - 10.2 [Integration Tests](#102-integration-tests-testsintegration)
    - 10.3 [End-to-End Tests](#103-end-to-end-tests-testse2e)
-   - 10.4 [Hardware Dry-Run Tests](#104-hardware-dry-run-tests)
-   - 10.5 [Test Execution](#105-test-execution)
+    - 10.4 [Hardware Dry-Run Tests](#104-hardware-dry-run-tests)
+    - 10.5 [Emulator-Based Testing](#105-emulator-based-testing)
+    - 10.6 [Test Execution](#106-test-execution)
 
 ---
 
@@ -1225,7 +1226,43 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 - **PTY simulation**: The `flask simulation-worker` and `flask simulation-terminal` commands provide full PTY-based mocks that exercise the XMODEM transfer path, WebSocket bridge, timeout handling, and session capture logic without requiring physical hardware.
 - **Real hardware integration**: After PTY tests pass, connect actual vintage machines and run a minimal "hello world" type program on a job port and an interactive login session on a terminal port to validate baud rates, handshaking, and line ending settings.
 
-### 10.5 Test Execution
+### 10.5 Emulator-Based Testing
+
+The built-in PTY simulation (§7.4) validates application correctness — job claiming, serial bridging, session state machines — but does **not** exercise real operating system behavior (boot sequences, login prompts, filesystem commands, actual program execution, etc.). Emulators fill this gap for pre-hardware integration testing.
+
+| Emulator       | Target Machine     | Description                                                                                                                              |
+| -------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Open SIMH**  | PDP-11/44          | Runs RSTS/E, RT-11, or 2.11 BSD Unix. Exposes serial console and terminal ports over TCP or PTY pairs.                                  |
+| **CPU7Plus**   | Centurion CPU-6    | Runs the native Centurion OS (Multi-User OS, BOS/5+). Exposes terminal ports over TCP or PTY pairs.                                     |
+
+**Serial bridging:**
+
+Emulator serial ports are exposed as TCP endpoints (e.g., `localhost:10023`) or PTY device paths. A `socat` bridge converts TCP to PTY for RetroBridge:
+
+```bash
+# Bridge SIMH PDP-11 port 10023 → PTY for RetroBridge
+socat PTY,link=/tmp/simh_pdp11_tty0,raw,echo=0 TCP:localhost:10023
+```
+
+Alternatively, RetroBridge can be extended with a TCP serial transport (future enhancement) so emulator ports can be configured as `tcp://localhost:10023` directly in `DevicePort.dev_path`.
+
+**Config directory:** `deploy/emulators/` contains example configuration files for each emulator:
+
+| File                              | Purpose                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `deploy/emulators/simh-pdp11.ini` | Open SIMH configuration: CPU model, serial ports, boot tape |
+| `deploy/emulators/cpu7plus.ini`   | CPU7Plus configuration: CPU model, serial ports, disk image |
+
+**Test coverage enabled:**
+
+- Boot/halt cycles with serial console capture
+- Login banner parsing and prompt detection
+- Multi-user concurrent logins (via multiple emulated interactive ports)
+- XMODEM program upload with actual execution on the emulated OS (compile/assemble and run)
+- Full terminal session lifecycle with real OS responsiveness and timing
+- Job worker interaction with a real OS shell (transfer, execute, capture output)
+
+### 10.6 Test Execution
 
 ```bash
 # Run all tests
