@@ -94,6 +94,9 @@ def create_app(config=None):
     from cli import register_cli_commands
     register_cli_commands(app)
 
+    from retrobridge.security import init_security
+    init_security(app)
+
     register_error_handlers(app)
 
     @app.context_processor

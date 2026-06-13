@@ -30,6 +30,17 @@ class BaseConfig:
     BACKUP_RETENTION_DAYS = int(os.environ.get('BACKUP_RETENTION_DAYS', '30'))
     BACKUP_RETENTION_COUNT = int(os.environ.get('BACKUP_RETENTION_COUNT', '10'))
 
+    SECURITY_HEADERS = {
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff',
+        'X-XSS-Protection': '0',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+    }
+    RATE_LIMIT_ENABLED = False
+    RATE_LIMITS = {
+        'default': (0, 60),
+    }
+
 
 class DevConfig(BaseConfig):
     DEBUG = True
@@ -40,6 +51,13 @@ class DevConfig(BaseConfig):
         'DATABASE_URL',
         f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}',
     )
+
+    SECURITY_HEADERS = {
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+    }
+    RATE_LIMIT_ENABLED = False
 
 
 class TestConfig(BaseConfig):
@@ -68,6 +86,34 @@ class ProdConfig(BaseConfig):
         'cache_size': -64000,
         'foreign_keys': 'ON',
         'temp_store': 'MEMORY',
+    }
+
+    SECURITY_HEADERS = {
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff',
+        'X-XSS-Protection': '0',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+        'Content-Security-Policy': (
+            "default-src 'self'; "
+            "script-src 'self' cdn.jsdelivr.net; "
+            "style-src 'self' cdn.jsdelivr.net; "
+            "img-src 'self' data:; "
+            "font-src 'self' cdn.jsdelivr.net; "
+            "connect-src 'self' wss:; "
+            "frame-ancestors 'none'"
+        ),
+    }
+    RATE_LIMIT_ENABLED = True
+    RATE_LIMITS = {
+        'health': (60, 60),
+        'auth': (10, 60),
+        'api': (120, 60),
+        'admin': (60, 60),
+        'terminal': (30, 60),
+        'jobs': (30, 60),
+        'default': (60, 60),
     }
 
     @classmethod
