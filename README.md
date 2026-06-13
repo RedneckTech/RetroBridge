@@ -42,7 +42,7 @@ Workers communicate with the Flask app **only through the SQLite database** (pol
 
 | Layer          | Technology                                          |
 | -------------- | --------------------------------------------------- |
-| Backend        | Python 3.11+, Flask 3.x, Flask-SocketIO 5.x         |
+| Backend        | Python 3.11+, Flask 3.x, Flask-SocketIO 5.x, python-dotenv |
 | ORM / DB       | SQLAlchemy 2.0, SQLite (WAL mode)                   |
 | Serial I/O     | pyserial 3.5, xmodem 0.4                            |
 | Frontend       | Bootstrap 5, Jinja2, xterm.js 5.x                   |
@@ -74,6 +74,9 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Configure environment — copy the example and edit as needed
+cp .env.example .env
 
 # Initialize the database
 flask init-db
@@ -135,6 +138,23 @@ After running `flask seed`:
 
 ## Configuration
 
+### Environment
+
+Configuration is loaded from environment variables, optionally sourced from a `.env` file (loaded automatically at startup via `python-dotenv`). Copy `.env.example` to `.env` and edit for your setup.
+
+Key variables:
+
+| Variable                   | Default                        | Description                            |
+| -------------------------- | ------------------------------ | -------------------------------------- |
+| `FLASK_ENV`                | `development`                  | `development`, `production`, `testing` |
+| `SECRET_KEY`               | `change-me-in-production`      | Session signing key (required in prod) |
+| `DATABASE_URL`             | `sqlite:///instance/retrobridge_dev.db` | SQLite database path          |
+| `BACKUP_DIR`               | `backups/`                     | Database backup directory              |
+| `BACKUP_RETENTION_DAYS`    | `30`                           | Max age before auto-pruning            |
+| `BACKUP_RETENTION_COUNT`   | `10`                           | Max backups before auto-pruning        |
+
+### Config Classes
+
 Configuration classes live in `config.py`:
 
 | Class         | Purpose                              |
@@ -143,7 +163,21 @@ Configuration classes live in `config.py`:
 | `ProdConfig`  | Production (real serial paths)       |
 | `TestConfig`  | Testing (in-memory SQLite)           |
 
-Set via `FLASK_ENV` environment variable. Secrets (`SECRET_KEY`, etc.) go in `.env`.
+Activate with `FLASK_ENV` environment variable.
+
+### SQLite Tuning
+
+Production automatically enables **WAL mode** and performance pragmas (busy timeout, mmap I/O, cache size, FK enforcement, temp store). These are set per-connection by `retrobridge/sqlite_provision.py` and overridable via the `SQLITE_PRAGMAS` config dict.
+
+### Production Startup Validation
+
+When `FLASK_ENV=production`, the app validates at boot:
+
+- **`SECRET_KEY`** — must be a unique, non-default value
+- **Config values** — retention settings are positive integers, `BACKUP_DIR` is writable, `MAX_CONTENT_LENGTH` is >= 1 MiB
+- **Database reachability** — runs `SELECT 1` against the configured URI; startup aborts if unreachable
+
+These checks are skipped in `development` and `testing` modes.
 
 Per-port serial settings (baud, parity, flow control, etc.) are managed through the admin panel and stored in the `device_ports` table.
 

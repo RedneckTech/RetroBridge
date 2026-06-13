@@ -69,3 +69,12 @@ class ProdConfig(BaseConfig):
         'foreign_keys': 'ON',
         'temp_store': 'MEMORY',
     }
+
+    @classmethod
+    def validate(cls):
+        key = cls.SECRET_KEY
+        if not key or key == 'change-me-in-production':
+            raise RuntimeError(
+                'SECRET_KEY must be set to a unique, unpredictable value '
+                'via the SECRET_KEY environment variable in production.'
+            )

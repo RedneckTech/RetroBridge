@@ -1,11 +1,14 @@
 import os
 
+from dotenv import load_dotenv
 from flask import Flask, request
 from flask_login import LoginManager
 from flask_socketio import SocketIO
 from flask_wtf.csrf import CSRFProtect
 
 from retrobridge.models import Base
+
+load_dotenv()
 
 login_manager = LoginManager()
 socketio = SocketIO()
@@ -25,6 +28,13 @@ def create_app(config=None):
             app.config.from_object('config.DevConfig')
     else:
         app.config.from_object(config)
+
+    if os.environ.get('FLASK_ENV') == 'production':
+        from config import ProdConfig
+        ProdConfig.validate()
+        from retrobridge.config_validation import validate_config, validate_db
+        validate_config(app)
+        validate_db(app)
 
     from retrobridge.models import Base as _Base
     from sqlalchemy import create_engine
