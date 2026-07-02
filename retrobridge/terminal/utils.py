@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from serial import Serial, SerialException
 
 from retrobridge.models import TerminalSession
+from retrobridge.transport import open_transport, transport_uses_baud
 
 logger = logging.getLogger(__name__)
 
@@ -141,19 +142,19 @@ def start_bridge(socketio, sid, session, port):
             return False
 
         try:
-            params = get_serial_params(port)
-            ser = Serial(**params)
+            ser = open_transport(port)
             # Disable local echo on the PTY slave to prevent feedback loops
-            try:
-                import termios
-                fd = ser.fileno()
-                attrs = termios.tcgetattr(fd)
-                attrs[3] = attrs[3] & ~termios.ECHO   # lflags: disable ECHO
-                termios.tcsetattr(fd, termios.TCSANOW, attrs)
-            except Exception:
-                pass
+            if (port.transport or 'serial') in ('serial', 'pty'):
+                try:
+                    import termios
+                    fd = ser.fileno() if hasattr(ser, 'fileno') else ser.fd
+                    attrs = termios.tcgetattr(fd)
+                    attrs[3] = attrs[3] & ~termios.ECHO
+                    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+                except Exception:
+                    pass
         except SerialException as e:
-            logger.error(f'Cannot open serial port {port.dev_path}: {e}')
+            logger.error(f'Cannot open {port.transport or "serial"} port {port.dev_path}: {e}')
             return False
 
         bridge = {

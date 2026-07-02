@@ -126,11 +126,11 @@ def register_cli_commands(app):
             s.flush()
             s.add(DevicePort(
                 device_id=centurion.id, port_label='TTY0', dev_path='/dev/centurion_tty0',
-                purpose='job_queue', baud=9600,
+                transport='serial', purpose='job_queue', baud=9600,
             ))
             s.add(DevicePort(
                 device_id=centurion.id, port_label='TTY1', dev_path='/dev/centurion_tty1',
-                purpose='interactive', baud=9600,
+                transport='serial', purpose='interactive', baud=9600,
                 max_runtime_seconds=3600, idle_timeout_seconds=300,
             ))
 
@@ -144,11 +144,11 @@ def register_cli_commands(app):
             s.flush()
             s.add(DevicePort(
                 device_id=pdp11.id, port_label='TTY0', dev_path='/dev/pdp11_tty0',
-                purpose='job_queue', baud=9600,
+                transport='serial', purpose='job_queue', baud=9600,
             ))
             s.add(DevicePort(
                 device_id=pdp11.id, port_label='TTY1', dev_path='/dev/pdp11_tty1',
-                purpose='interactive', baud=9600,
+                transport='serial', purpose='interactive', baud=9600,
                 max_runtime_seconds=3600, idle_timeout_seconds=300,
             ))
 

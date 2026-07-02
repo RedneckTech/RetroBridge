@@ -10,14 +10,19 @@ Currently targets the **Centurion CPU-6** and **DEC PDP-11/44**, both multi-user
 
 ## Features
 
-- **Job queue with scheduling** — Upload programs, queue them per-device, and let background workers handle serial transfer via XMODEM
+- **Job queue with scheduling** — Upload programs, queue them per-device, and let background workers handle transfer via XMODEM
+- **Live job updates via SSE** — Job detail pages stream status changes and output in real time with Server-Sent Events; dashboard auto-refreshes
 - **Web-based interactive terminal** — Log into vintage systems through your browser using xterm.js + WebSocket, with full bidirectional serial bridging
-- **Multi-port device support** — Each vintage machine can have multiple RS-232 ports, partitioned into job-queue and interactive pools
+- **Multi-transport device support** — Connect via local RS-232, PTY, raw TCP, Telnet, or RFC 2217 remote serial
+- **Emulated systems as production targets** — Connect Open SIMH (PDP-11) or CPU7Plus (Centurion) emulators via TCP and use them as first-class devices alongside real hardware
+- **Multi-port device support** — Each vintage machine can have multiple ports, partitioned into job-queue and interactive pools
 - **Per-port serial configuration** — Baud rate, parity, stop bits, flow control, and line-ending conversion configurable per port
 - **Admin panel** — Manage users, devices, ports, jobs, terminal sessions, and global settings
 - **PTY-based simulation** — Develop and test without hardware using built-in pseudo-terminal simulation for both job processing and terminal sessions
 - **Role-based access control** — Regular users manage their own jobs and sessions; admins have full control
-- **Audit logging** — Every byte sent and received on job ports is timestamped; optional keystroke logging for terminal sessions
+- **Admin force-disconnect** — Admins can terminate terminal sessions remotely; the `session_closed` event pushes to the client's browser via Socket.IO
+- **Audit logging** — Every byte sent and received on job ports is timestamped; optional per-session keystroke/output logging for terminal sessions
+- **Upload security** — File content validated against magic bytes (rejects ELF, PE, archives, images), text/binary detection per extension, size limits enforced before disk write
 - **Health check endpoints** — Liveness (`GET /health`) and readiness (`GET /ready`) probes for load balancers and container orchestration
 - **SQLite backup system** — CLI commands for online backup/restore with automatic pruning and a standalone cron script
 
@@ -27,14 +32,18 @@ Currently targets the **Centurion CPU-6** and **DEC PDP-11/44**, both multi-user
 
 ```
 Browser ──HTTPS──▶ nginx ──HTTP──▶ gunicorn ──▶ Flask App ──▶ SQLite (WAL)
-                        └─WebSocket──▶ Flask-SocketIO (eventlet)
+                    │  └─WebSocket──▶ Flask-SocketIO (eventlet)
+                    │  └─SSE stream──▶ /api/jobs/<id>/events
+                    │
+Worker (Centurion) ──transport──▶ Centurion CPU-6 (job ports)
+Worker (PDP-11)    ──transport──▶ PDP-11/44      (job ports)
+Terminal Sessions  ──transport──▶ Both machines   (interactive ports)
+Emulated Systems   ──TCP/Telnet──▶ SIMH / CPU7Plus (production)
 
-Worker (Centurion) ──RS-232──▶ Centurion CPU-6 (job ports)
-Worker (PDP-11)    ──RS-232──▶ PDP-11/44      (job ports)
-Terminal Sessions  ──RS-232──▶ Both machines   (interactive ports)
+transport ∈ { serial, pty, tcp, telnet, rfc2217 }
 ```
 
-Workers communicate with the Flask app **only through the SQLite database** (poll/claim/update pattern). Terminal sessions bridge WebSocket ↔ RS-232 in real time via eventlet green threads.
+Workers communicate with the Flask app **only through the SQLite database** (poll/claim/update pattern). Terminal sessions bridge WebSocket ↔ serial/network in real time via eventlet green threads. Job status and output stream to browsers via Server-Sent Events.
 
 ---
 
@@ -44,12 +53,13 @@ Workers communicate with the Flask app **only through the SQLite database** (pol
 | -------------- | --------------------------------------------------- |
 | Backend        | Python 3.11+, Flask 3.x, Flask-SocketIO 5.x, python-dotenv |
 | ORM / DB       | SQLAlchemy 2.0, SQLite (WAL mode)                   |
-| Serial I/O     | pyserial 3.5, xmodem 0.4                            |
+| Serial I/O     | pyserial 3.5, xmodem 0.4, raw sockets (TCP/Telnet)  |
+| Live Updates   | Server-Sent Events (job status/output streaming)     |
 | Frontend       | Bootstrap 5, Jinja2, xterm.js 5.x                   |
 | WebSocket      | Flask-SocketIO + eventlet                           |
 | WSGI Server    | gunicorn                                            |
 | Reverse Proxy  | nginx (TLS termination, WebSocket proxying)         |
-| Process Mgmt   | systemd                                             |
+| Process Mgmt   | systemd, run.sh (dev convenience)                   |
 
 ---
 
@@ -61,7 +71,28 @@ Workers communicate with the Flask app **only through the SQLite database** (pol
 - Linux with systemd (for production deployment)
 - RS-232 serial adapters (USB or PCIe) connected to vintage hardware — *or use PTY simulation for development*
 
-### Setup
+### Quick Start with `run.sh`
+
+The easiest way to get a dev environment running:
+
+```bash
+./run.sh
+```
+
+This script:
+- Creates a virtual environment and installs dependencies if needed
+- Detects stale database schemas (missing columns from model changes) and offers to recreate
+- Initializes and seeds the database on first run
+- Starts the Flask dev server
+- Launches PTY terminal simulations for each configured device
+
+Use `Ctrl+C` to stop all services. Set `PTY_DEVICES` to control which simulations start:
+
+```bash
+PTY_DEVICES="centurion" ./run.sh
+```
+
+### Manual Setup
 
 ```bash
 # Clone the repo
@@ -87,6 +118,16 @@ flask seed
 # Start the dev server
 flask run
 ```
+
+### Schema Changes
+
+When the data model changes (new columns added), the dev database must be recreated:
+
+```bash
+rm instance/retrobridge_dev.db && flask init-db && flask seed
+```
+
+`run.sh` detects this automatically and prompts before recreating.
 
 ### Development with Simulation (no hardware required)
 
@@ -133,6 +174,43 @@ After running `flask seed`:
 - **Password:** `admin`
 
 *Change this immediately in production.*
+
+---
+
+## Serial Transports
+
+Each device port specifies a **transport** type and **address**. Transports are configured per-port through the admin panel.
+
+| Transport   | Address Format          | Use Case                                                     |
+| ----------- | ----------------------- | ------------------------------------------------------------ |
+| `serial`    | `/dev/ttyUSB0`          | Physical RS-232 adapter (USB, PCIe, onboard)                 |
+| `pty`       | `/tmp/centurion_tty0`   | Pseudo-terminal (simulation, socat bridge)                   |
+| `tcp`       | `host:port`             | Raw TCP — emulators, serial-to-Ethernet adapters             |
+| `telnet`    | `host:port`             | Telnet — legacy terminal servers, some SIMH configs          |
+| `rfc2217`   | `host:port`             | RFC 2217 remote serial with modem control signals            |
+
+Baud rate, parity, and flow control apply to `serial`, `pty`, and `rfc2217` transports. They are ignored for `tcp` and `telnet` (the emulator or remote adapter handles the physical serial side).
+
+### Connecting Emulated Systems
+
+Vintage hardware is not required. Software emulators can be used as production targets:
+
+```bash
+# Start Open SIMH (PDP-11) exposing serial ports on TCP
+simh-pdp11 pdp11.ini    # e.g., port 10023 = job queue, 10024 = interactive
+
+# Start CPU7Plus (Centurion) exposing serial ports on TCP
+cpu7plus centurion.ini  # e.g., port 10901 = job queue, 10902 = interactive
+```
+
+Then configure ports in the admin panel:
+
+```
+transport=tcp  dev_path=127.0.0.1:10023  purpose=job_queue       transfer_protocol=xmodem
+transport=tcp  dev_path=127.0.0.1:10024  purpose=interactive    newline_mode=crlf
+```
+
+Emulated systems appear as first-class devices in the admin panel and function identically to physical hardware. See [SDD.md §10.5](SDD.md#105-connecting-emulated-systems) for multi-port setups, socat bridging, and RFC 2217 serial-to-Ethernet adapters.
 
 ---
 
@@ -196,17 +274,21 @@ Directory layout on disk:
 ```
 /srv/retrobridge/
 ├── retrobridge/        # Application package
+│   ├── transport.py    # Transport abstraction (serial, pty, tcp, telnet, rfc2217)
+│   └── ...
 ├── deploy/             # Production deployment scripts
 │   └── backup.py       # Standalone cron backup script
 ├── worker.py           # Worker daemon
 ├── cli.py              # Flask CLI commands
 ├── config.py           # Configuration classes
+├── run.sh              # Dev convenience launcher (schema checks + PTY sims)
 ├── requirements.txt
 ├── wsgi.py             # Gunicorn entry point
 ├── instance/           # SQLite database (auto-created)
 ├── backups/            # Database backups (auto-created)
 ├── uploads/            # User program uploads
 ├── outputs/            # Job session capture logs
+├── session_logs/       # Per-session terminal keystroke/output logs
 └── logs/               # Application and worker logs
 ```
 

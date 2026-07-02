@@ -20,7 +20,14 @@ class EditDeviceForm(FlaskForm):
 
 class DevicePortForm(FlaskForm):
     port_label = StringField('Label', validators=[DataRequired(), Length(max=32)])
-    dev_path = StringField('Device Path', validators=[DataRequired(), Length(max=128)])
+    transport = SelectField('Transport', choices=[
+        ('serial', 'Serial (RS-232)'),
+        ('pty', 'PTY (Pseudo-Terminal)'),
+        ('tcp', 'TCP (Raw Socket)'),
+        ('telnet', 'Telnet'),
+        ('rfc2217', 'RFC 2217 (Remote Serial)'),
+    ], default='serial')
+    dev_path = StringField('Device Path / Address', validators=[DataRequired(), Length(max=256)])
     purpose = SelectField('Purpose', choices=[
         ('job_queue', 'Job Queue'),
         ('interactive', 'Interactive'),

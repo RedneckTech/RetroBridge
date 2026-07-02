@@ -292,6 +292,7 @@ def add_port(device_id):
     if form.validate_on_submit():
         port = DevicePort(
             device_id=device_id,
+            transport=form.transport.data,
             port_label=form.port_label.data,
             dev_path=form.dev_path.data,
             purpose=form.purpose.data,
@@ -332,6 +333,7 @@ def edit_port(device_id, port_id):
 
     form = DevicePortForm(obj=port)
     if form.validate_on_submit():
+        port.transport = form.transport.data
         port.port_label = form.port_label.data
         port.dev_path = form.dev_path.data
         port.purpose = form.purpose.data
