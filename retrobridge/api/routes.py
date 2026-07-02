@@ -1,4 +1,8 @@
-from flask import jsonify, request
+import json
+import os
+import time
+
+from flask import jsonify, request, Response, stream_with_context
 from flask_login import login_required, current_user
 
 from retrobridge.api import api_bp
@@ -252,6 +256,76 @@ def delete_user(user_id):
     current_app.db_session.delete(user)
     current_app.db_session.commit()
     return jsonify({'success': True})
+
+
+@api_bp.route('/jobs/<int:job_id>/events')
+@login_required
+def job_events(job_id):
+    """Server-Sent Events stream for live job status and output updates."""
+    from flask import current_app
+
+    job = current_app.db_session.get(Job, job_id)
+    if not job or (job.user_id != current_user.id and not current_user.is_admin):
+        return jsonify({'error': 'Not found'}), 404
+
+    def _job_status_data(j):
+        return {
+            'id': j.id,
+            'status': j.status,
+            'device': j.device.name if j.device else None,
+            'created_at': j.created_at.isoformat() if j.created_at else None,
+            'started_at': j.started_at.isoformat() if j.started_at else None,
+            'finished_at': j.finished_at.isoformat() if j.finished_at else None,
+            'runtime_seconds': j.runtime_seconds,
+            'error_message': j.error_message,
+            'exit_code': j.exit_code,
+            'output_path': bool(j.output_path),
+        }
+
+    def generate():
+        last_status = job.status
+        last_output_size = 0
+        poll_interval = 2
+
+        while True:
+            current_app.db_session.refresh(job)
+
+            if job.status != last_status:
+                last_status = job.status
+                yield f"event: status\ndata: {json.dumps(_job_status_data(job))}\n\n"
+
+            if job.output_path:
+                try:
+                    current_size = os.path.getsize(job.output_path)
+                except OSError:
+                    current_size = last_output_size
+
+                if current_size > last_output_size:
+                    try:
+                        with open(job.output_path, 'r', encoding='utf-8', errors='replace') as f:
+                            f.seek(last_output_size)
+                            new_text = f.read(current_size - last_output_size)
+                            last_output_size = current_size
+                            yield f"event: output\ndata: {json.dumps({'text': new_text})}\n\n"
+                    except OSError:
+                        pass
+
+            if job.status in ('completed', 'failed', 'canceled'):
+                yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
+                return
+
+            yield f": heartbeat\n\n"
+            time.sleep(poll_interval)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
 
 
 @api_bp.route('/check-username')

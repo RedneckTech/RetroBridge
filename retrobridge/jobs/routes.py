@@ -109,7 +109,15 @@ def detail(job_id):
         from flask import abort
         abort(403)
 
-    return render_template('jobs/detail.html', job=job)
+    output_content = ''
+    if job.output_path:
+        try:
+            with open(job.output_path, 'r', encoding='utf-8', errors='replace') as f:
+                output_content = f.read()
+        except OSError:
+            pass
+
+    return render_template('jobs/detail.html', job=job, output_content=output_content)
 
 
 @jobs_bp.route('/<int:job_id>/download')

@@ -47,7 +47,7 @@
    - 6.1 [REST API Endpoints](#61-rest-api-endpoints)
    - 6.2 [WebSocket API (Flask-SocketIO)](#62-websocket-api-flask-socketio)
    - 6.3 [Web UI Pages](#63-web-ui-pages)
-   - 6.4 [Serial Protocol Interface](#64-serial-protocol-interface)
+   - 6.4 [Serial Transport Interface](#64-serial-transport-interface)
 7. [Detailed Design](#7-detailed-design)
    - 7.1 [Authentication Flow](#71-authentication-flow)
    - 7.2 [Job Upload Flow](#72-job-upload-flow)
@@ -73,9 +73,9 @@
    - 10.1 [Unit Tests](#101-unit-tests-testsunit)
    - 10.2 [Integration Tests](#102-integration-tests-testsintegration)
    - 10.3 [End-to-End Tests](#103-end-to-end-tests-testse2e)
-    - 10.4 [Hardware Dry-Run Tests](#104-hardware-dry-run-tests)
-    - 10.5 [Emulator-Based Testing](#105-emulator-based-testing)
-    - 10.6 [Test Execution](#106-test-execution)
+- 10.4 [Hardware Dry-Run Tests](#104-hardware-dry-run-tests)
+- 10.5 [Connecting Emulated Systems](#105-connecting-emulated-systems)
+- 10.6 [Test Execution](#106-test-execution)
 
 ---
 
@@ -393,6 +393,14 @@ email-validator==2.1.*
 | werkzeug        | 3.0.x   | Password hashing utilities (bundled with Flask)          |
 | email-validator | 2.1.x   | Email format validation in forms                         |
 
+**System-level dependencies:**
+
+| Dependency  | Purpose                                                            |
+| ----------- | ------------------------------------------------------------------ |
+| socat       | Bridge emulator TCP serial ports to PTY devices for RetroBridge   |
+| screen      | Detached terminal session management (optional, for emulator mgmt) |
+| udev        | Stable device symlinks for physical USB/PCIe serial adapters       |
+
 **Client-side dependencies (CDN):**
 
 | Library                     | Purpose                                    |
@@ -465,7 +473,8 @@ Each Device has multiple RS-232 ports. Each port is assigned a `purpose` that de
 | `id`                   | Integer     | Primary key, autoincrement                                                |
 | `device_id`            | Integer     | ForeignKey → `devices.id`, NOT NULL                                       |
 | `port_label`           | String(32)  | E.g. "TTY0", "TTY1", "CONSOLE"                                            |
-| `dev_path`             | String(128) | Device path, e.g. `/dev/centurion_tty0` or PTY path                       |
+| `transport`            | String(16)  | Default `'serial'` (valid: serial, pty, tcp, telnet, rfc2217)             |
+| `dev_path`             | String(256) | Address/URI for the transport: `/dev/ttyUSB0`, `/tmp/pty`, `host:port`    |
 | `purpose`              | String(16)  | `'job_queue'` or `'interactive'`                                          |
 | `baud`                 | Integer     | Default 9600                                                              |
 | `data_bits`            | Integer     | Default 8                                                                 |
@@ -674,20 +683,50 @@ Each Device has multiple RS-232 ports. Each port is assigned a `purpose` that de
 | `GET /admin/settings`            | `admin/settings.html`   | admin         | Global settings form populated from `AdminSetting` table: upload limits, quotas, terminal session timeouts                                                     |
 | `POST /admin/settings`           | (redirect)              | admin         | Save settings, redirect with flash message                                                                                                                     |
 
-### 6.4 Serial Protocol Interface
+### 6.4 Serial Transport Interface
 
-The system communicates with each vintage system over RS-232 via `pyserial`. Serial configuration is defined per port (`DevicePort` model), not per device, since each port may have different settings.
+Each `DevicePort` specifies a **transport** that determines how RetroBridge opens the serial connection. The transport is selected via the `transport` column and its address/URI is stored in `dev_path`. Serial line parameters (baud, parity, flow control, etc.) are configured per-port in the same `DevicePort` record and apply regardless of transport type.
+
+#### Supported Transport Types
+
+| Transport   | `dev_path` Format          | Description                                                                               |
+| ----------- | -------------------------- | ----------------------------------------------------------------------------------------- |
+| `serial`    | `/dev/ttyUSB0`             | Local RS-232 device via USB, PCIe, or onboard serial port. Opened with `pyserial`.        |
+| `pty`       | `/tmp/centurion_tty0`      | Pseudo-terminal (PTY) for simulation or `socat`-bridged emulator ports.                   |
+| `tcp`       | `host:port` or `host port` | Raw TCP socket connection. Ideal for emulators, serial-to-Ethernet adapters, and terminal servers. |
+| `telnet`    | `host:port` or `host port` | Telnet protocol connection. Used by some vintage terminal servers and legacy emulators that speak telnet negotiation. |
+| `rfc2217`   | `host:port` or `host port` | RFC 2217 (Telnet COM Port Control) remote serial port. Exposes full modem control signals (RTS/CTS, DTR/DSR) over TCP via `pyserial`'s `rfc2217://` URL scheme. |
+
+#### Transport Selection Logic
+
+RetroBridge resolves the transport at connection time:
+
+1. If `transport` is `pty`, open the filesystem path directly with `pyserial` (used for simulation and socat bridges).
+2. If `transport` is `serial`, open the local device file with `pyserial` (physical RS-232 ports).
+3. If `transport` is `tcp`, open a raw TCP socket via `socket.create_connection()` and wrap it with `pyserial.serial_for_url('socket://host:port')` or direct socket I/O to avoid unnecessary pyserial abstractions.
+4. If `transport` is `telnet`, connect via TCP and perform minimal telnet option negotiation (reject WILL DO for linemode, echo, suppress go-ahead), then treat as raw bidirectional stream.
+5. If `transport` is `rfc2217`, use `pyserial.serial_for_url('rfc2217://host:port')` which handles the RFC 2217 control protocol for baud rate negotiation and modem line access.
+
+#### Transport and Baud Rate
+
+- **serial / pty / rfc2217**: Baud rate, data bits, parity, stop bits, and flow control from `DevicePort` are applied when opening the connection.
+- **tcp / telnet**: Baud and line parameters are not meaningful on the TCP side (the emulator or remote serial adapter handles the physical serial side). These `DevicePort` fields are ignored; only `dev_path`, `max_runtime_seconds`, and `idle_timeout_seconds` are used.
+
+#### Shared Port Parameters
+
+All transports share the following `DevicePort` parameters:
 
 **Job queue ports (`purpose='job_queue'`):**
 
 | Parameter              | Description                                                                    | Source                            |
 | ---------------------- | ------------------------------------------------------------------------------ | --------------------------------- |
-| `dev_path`             | Serial device file path                                                        | `DevicePort.dev_path`             |
-| `baud`                 | Baud rate (e.g., 9600, 19200)                                                  | `DevicePort.baud`                 |
-| `data_bits`            | Data bits per frame (5–8)                                                      | `DevicePort.data_bits`            |
-| `parity`               | Parity bit (N, E, O, M, S)                                                     | `DevicePort.parity`               |
-| `stop_bits`            | Stop bits (1, 1.5, 2)                                                          | `DevicePort.stop_bits`            |
-| `flow_control`         | 'none', 'rtscts', or 'xonxoff'                                                 | `DevicePort.flow_control`         |
+| `transport`            | Connection transport type                                                      | `DevicePort.transport`            |
+| `dev_path`             | Address/URI for the selected transport                                         | `DevicePort.dev_path`             |
+| `baud`                 | Baud rate (e.g., 9600, 19200) — ignored for tcp/telnet                         | `DevicePort.baud`                 |
+| `data_bits`            | Data bits per frame (5–8) — ignored for tcp/telnet                             | `DevicePort.data_bits`            |
+| `parity`               | Parity bit (N, E, O, M, S) — ignored for tcp/telnet                            | `DevicePort.parity`               |
+| `stop_bits`            | Stop bits (1, 1.5, 2) — ignored for tcp/telnet                                 | `DevicePort.stop_bits`            |
+| `flow_control`         | 'none', 'rtscts', or 'xonxoff' — ignored for tcp/telnet                        | `DevicePort.flow_control`         |
 | `newline_mode`         | Line ending conversion: 'cr', 'lf', or 'crlf'                                  | `DevicePort.newline_mode`         |
 | `transfer_protocol`    | File transfer protocol; initially 'xmodem'                                     | `DevicePort.transfer_protocol`    |
 | `pre_transfer_cmds`    | JSON array of strings sent before file transfer (e.g., `["\r", "XMODEM R\r"]`) | `DevicePort.pre_transfer_cmds`    |
@@ -699,15 +738,43 @@ The system communicates with each vintage system over RS-232 via `pyserial`. Ser
 
 | Parameter              | Description                                                               | Source                            |
 | ---------------------- | ------------------------------------------------------------------------- | --------------------------------- |
-| `dev_path`             | Serial device file path                                                   | `DevicePort.dev_path`             |
-| `baud`                 | Baud rate                                                                 | `DevicePort.baud`                 |
-| `data_bits`            | Data bits per frame                                                       | `DevicePort.data_bits`            |
-| `parity`               | Parity bit                                                                | `DevicePort.parity`               |
-| `stop_bits`            | Stop bits                                                                 | `DevicePort.stop_bits`            |
-| `flow_control`         | Hardware or software flow control                                         | `DevicePort.flow_control`         |
+| `transport`            | Connection transport type                                                 | `DevicePort.transport`            |
+| `dev_path`             | Address/URI for the selected transport                                    | `DevicePort.dev_path`             |
+| `baud`                 | Baud rate — ignored for tcp/telnet                                        | `DevicePort.baud`                 |
+| `data_bits`            | Data bits per frame — ignored for tcp/telnet                              | `DevicePort.data_bits`            |
+| `parity`               | Parity bit — ignored for tcp/telnet                                       | `DevicePort.parity`               |
+| `stop_bits`            | Stop bits — ignored for tcp/telnet                                        | `DevicePort.stop_bits`            |
+| `flow_control`         | Hardware or software flow control — ignored for tcp/telnet                | `DevicePort.flow_control`         |
 | `newline_mode`         | Line ending conversion for terminal display                               | `DevicePort.newline_mode`         |
 | `max_runtime_seconds`  | Maximum terminal session duration (default 3600 = 1 hour)                 | `DevicePort.max_runtime_seconds`  |
 | `idle_timeout_seconds` | Seconds of serial inactivity before auto-disconnect (default 300 = 5 min) | `DevicePort.idle_timeout_seconds` |
+
+#### Example Port Configurations
+
+**Physical RS-232 USB adapter (Centurion job port):**
+```
+transport=serial  dev_path=/dev/centurion_tty0  baud=9600  parity=N  flow_control=rtscts
+```
+
+**SIMH PDP-11 emulator via TCP (interactive port):**
+```
+transport=tcp  dev_path=127.0.0.1:10023  newline_mode=crlf
+```
+
+**CPU7Plus emulator via socat PTY bridge (job port):**
+```
+transport=pty  dev_path=/tmp/cpu7plus_job  baud=9600
+```
+
+**Serial-to-Ethernet adapter (RFC 2217, interacting with real hardware over LAN):**
+```
+transport=rfc2217  dev_path=192.168.1.50:4001  baud=19200  parity=N  flow_control=rtscts
+```
+
+**Legacy terminal server (telnet, interactive port):**
+```
+transport=telnet  dev_path=192.168.1.10:23  newline_mode=crlf
+```
 
 **Byte logging:**
 
@@ -1226,41 +1293,69 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 - **PTY simulation**: The `flask simulation-worker` and `flask simulation-terminal` commands provide full PTY-based mocks that exercise the XMODEM transfer path, WebSocket bridge, timeout handling, and session capture logic without requiring physical hardware.
 - **Real hardware integration**: After PTY tests pass, connect actual vintage machines and run a minimal "hello world" type program on a job port and an interactive login session on a terminal port to validate baud rates, handshaking, and line ending settings.
 
-### 10.5 Emulator-Based Testing
+### 10.5 Connecting Emulated Systems
 
-The built-in PTY simulation (§7.4) validates application correctness — job claiming, serial bridging, session state machines — but does **not** exercise real operating system behavior (boot sequences, login prompts, filesystem commands, actual program execution, etc.). Emulators fill this gap for pre-hardware integration testing.
+Vintage hardware is not a prerequisite — RetroBridge can connect to software emulators running full vintage operating systems in production. Emulated systems behave identically to real hardware from RetroBridge's perspective: they expose RS-232 serial ports (over TCP or PTY) that RetroBridge bridges to the web UI for job processing and interactive terminal sessions via the transport types defined in §6.4.
 
-| Emulator       | Target Machine     | Description                                                                                                                              |
-| -------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Open SIMH**  | PDP-11/44          | Runs RSTS/E, RT-11, or 2.11 BSD Unix. Exposes serial console and terminal ports over TCP or PTY pairs.                                  |
-| **CPU7Plus**   | Centurion CPU-6    | Runs the native Centurion OS (Multi-User OS, BOS/5+). Exposes terminal ports over TCP or PTY pairs.                                     |
+| Emulator      | Target Machine  | Operating Systems                                  | Serial Ports                              |
+| ------------- | --------------- | --------------------------------------------------- | ----------------------------------------- |
+| **Open SIMH** | PDP-11/44       | RSTS/E, RT-11, 2.11 BSD Unix, RSX-11M              | TCP endpoints or PTY pairs                |
+| **CPU7Plus**  | Centurion CPU-6 | Centurion Multi-User OS, BOS/5+                    | TCP endpoints or PTY pairs                |
 
-**Serial bridging:**
+#### Connecting via TCP (recommended)
 
-Emulator serial ports are exposed as TCP endpoints (e.g., `localhost:10023`) or PTY device paths. A `socat` bridge converts TCP to PTY for RetroBridge:
+The simplest approach is direct TCP — configure the `DevicePort` with `transport=tcp` and `dev_path=host:port`. RetroBridge opens a raw TCP socket to the emulator's serial port. No socat bridge is needed:
+
+```
+DevicePort: transport=tcp  dev_path=127.0.0.1:10023  purpose=interactive
+DevicePort: transport=tcp  dev_path=127.0.0.1:10024  purpose=job_queue
+```
+
+For emulators that expose telnet (e.g., some SIMH configurations), use `transport=telnet`:
+
+```
+DevicePort: transport=telnet  dev_path=127.0.0.1:23  purpose=interactive
+```
+
+#### Connecting via socat (PTY fallback)
+
+If an emulator only exposes PTY device paths, or if you prefer PTY-based bridging, use `socat` to bridge TCP to a PTY and configure the port with `transport=pty`:
 
 ```bash
 # Bridge SIMH PDP-11 port 10023 → PTY for RetroBridge
 socat PTY,link=/tmp/simh_pdp11_tty0,raw,echo=0 TCP:localhost:10023
 ```
 
-Alternatively, RetroBridge can be extended with a TCP serial transport (future enhancement) so emulator ports can be configured as `tcp://localhost:10023` directly in `DevicePort.dev_path`.
+The PTY path is then configured as `transport=pty  dev_path=/tmp/simh_pdp11_tty0`.
 
-**Config directory:** `deploy/emulators/` contains example configuration files for each emulator:
+#### Multiple ports per emulator
 
-| File                              | Purpose                                                     |
-| --------------------------------- | ----------------------------------------------------------- |
-| `deploy/emulators/simh-pdp11.ini` | Open SIMH configuration: CPU model, serial ports, boot tape |
-| `deploy/emulators/cpu7plus.ini`   | CPU7Plus configuration: CPU model, serial ports, disk image |
+Most emulators can expose multiple serial ports. Each port becomes a separate `DevicePort` in RetroBridge, partitioned into job-queue and interactive pools just like physical hardware. With direct TCP transport, each port simply uses a different emulator port number:
 
-**Test coverage enabled:**
+```
+# SIMH PDP-11: port 10023 = job queue, port 10024 = interactive
+DevicePort: transport=tcp  dev_path=127.0.0.1:10023  purpose=job_queue       transfer_protocol=xmodem
+DevicePort: transport=tcp  dev_path=127.0.0.1:10024  purpose=interactive    newline_mode=crlf
 
-- Boot/halt cycles with serial console capture
-- Login banner parsing and prompt detection
-- Multi-user concurrent logins (via multiple emulated interactive ports)
-- XMODEM program upload with actual execution on the emulated OS (compile/assemble and run)
-- Full terminal session lifecycle with real OS responsiveness and timing
-- Job worker interaction with a real OS shell (transfer, execute, capture output)
+# CPU7Plus: port 10901 = job queue, port 10902 = interactive
+DevicePort: transport=tcp  dev_path=127.0.0.1:10901  purpose=job_queue       transfer_protocol=xmodem
+DevicePort: transport=tcp  dev_path=127.0.0.1:10902  purpose=interactive    newline_mode=crlf
+```
+
+When connecting over a network to serial-to-Ethernet adapters bridging real hardware, use `transport=rfc2217` for full modem signal access:
+
+```
+DevicePort: transport=rfc2217  dev_path=192.168.1.50:4001  baud=19200  parity=N  flow_control=rtscts
+```
+
+#### Production use
+
+Emulated systems connected this way are treated as first-class production devices. They appear in the admin panel alongside physical hardware, participate fully in the job queue and terminal session pools, and have no functional limitations compared to real machines. This is the recommended path for:
+
+- Development and testing without vintage hardware
+- Providing additional capacity alongside physical machines
+- Running installations entirely on emulated systems
+- Disaster recovery and redundancy via replicated emulator images
 
 ### 10.6 Test Execution
 
