@@ -6,6 +6,7 @@ from flask import jsonify, request, Response, stream_with_context
 from flask_login import login_required, current_user
 
 from retrobridge.api import api_bp
+from retrobridge.jobs import utils as jobs_utils
 from retrobridge.models import Job, Device, DevicePort, TerminalSession, User
 
 
@@ -43,45 +44,29 @@ def list_jobs():
 @login_required
 def job_status(job_id):
     from flask import current_app
-    job = current_app.db_session.get(Job, job_id)
-    if not job or (job.user_id != current_user.id and not current_user.is_admin):
-        return jsonify({'error': 'Not found'}), 404
+    job, error = jobs_utils.get_job_or_403(current_app.db_session, job_id,
+                                            current_user.id, current_user.is_admin)
+    if not job:
+        return jsonify({'error': 'Forbidden' if error == 403 else 'Not found'}), error
 
-    return jsonify({
-        'id': job.id,
-        'status': job.status,
-        'device': job.device.name if job.device else None,
-        'created_at': job.created_at.isoformat() if job.created_at else None,
-        'started_at': job.started_at.isoformat() if job.started_at else None,
-        'finished_at': job.finished_at.isoformat() if job.finished_at else None,
-        'runtime_seconds': job.runtime_seconds,
-        'error_message': job.error_message,
-    })
+    return jsonify(jobs_utils.job_status_dict(job))
 
 
 @api_bp.route('/jobs/<int:job_id>/output')
 @login_required
 def job_output(job_id):
     from flask import current_app
-    job = current_app.db_session.get(Job, job_id)
-    if not job or (job.user_id != current_user.id and not current_user.is_admin):
-        return jsonify({'error': 'Not found'}), 404
+    job, error = jobs_utils.get_job_or_403(current_app.db_session, job_id,
+                                            current_user.id, current_user.is_admin)
+    if not job:
+        return jsonify({'error': 'Forbidden' if error == 403 else 'Not found'}), error
 
     if not job.output_path:
         return jsonify({'lines': []})
 
-    try:
-        with open(job.output_path, 'r') as f:
-            tail = request.args.get('tail', type=int)
-            if tail:
-                lines = f.readlines()
-                lines = lines[-tail:] if len(lines) > tail else lines
-            else:
-                lines = f.readlines()
-    except FileNotFoundError:
-        lines = []
-
-    return jsonify({'lines': [l.rstrip('\n') for l in lines]})
+    tail = request.args.get('tail', type=int)
+    lines = jobs_utils.read_output_tail(job.output_path, tail)
+    return jsonify({'lines': lines})
 
 
 @api_bp.route('/devices')
@@ -166,20 +151,14 @@ def create_job():
 @login_required
 def cancel_job(job_id):
     from flask import current_app
-    job = current_app.db_session.get(Job, job_id)
-    if not job or (job.user_id != current_user.id and not current_user.is_admin):
-        return jsonify({'success': False, 'message': 'Not found'}), 404
-
-    if job.status == 'queued':
-        job.status = 'canceled'
-        current_app.db_session.commit()
-        return jsonify({'success': True, 'message': 'Job canceled'})
-    elif job.status == 'running' and current_user.is_admin:
-        job.status = 'canceled'
-        current_app.db_session.commit()
-        return jsonify({'success': True, 'message': 'Job force-canceled'})
-
-    return jsonify({'success': False, 'message': 'Cannot cancel running job'}), 400
+    success, message = jobs_utils.cancel_job(
+        current_app.db_session, job_id, current_user.id,
+        is_admin=current_user.is_admin,
+    )
+    if not success:
+        status = 404 if message == 'Job not found' else 400
+        return jsonify({'success': False, 'message': message}), status
+    return jsonify({'success': True, 'message': message})
 
 
 @api_bp.route('/sessions/active')
@@ -229,13 +208,12 @@ def admin_cancel_job(job_id):
     if not current_user.is_admin:
         return jsonify({'error': 'Forbidden'}), 403
 
-    job = current_app.db_session.get(Job, job_id)
-    if not job:
-        return jsonify({'success': False, 'message': 'Job not found'}), 404
-
-    job.status = 'canceled'
-    current_app.db_session.commit()
-    return jsonify({'success': True, 'message': 'Job force-canceled'})
+    success, message = jobs_utils.cancel_job(
+        current_app.db_session, job_id, current_user.id, is_admin=True,
+    )
+    if not success:
+        return jsonify({'success': False, 'message': message}), 404
+    return jsonify({'success': True, 'message': message})
 
 
 @api_bp.route('/admin/users/<int:user_id>', methods=['DELETE'])
@@ -264,23 +242,10 @@ def job_events(job_id):
     """Server-Sent Events stream for live job status and output updates."""
     from flask import current_app
 
-    job = current_app.db_session.get(Job, job_id)
-    if not job or (job.user_id != current_user.id and not current_user.is_admin):
-        return jsonify({'error': 'Not found'}), 404
-
-    def _job_status_data(j):
-        return {
-            'id': j.id,
-            'status': j.status,
-            'device': j.device.name if j.device else None,
-            'created_at': j.created_at.isoformat() if j.created_at else None,
-            'started_at': j.started_at.isoformat() if j.started_at else None,
-            'finished_at': j.finished_at.isoformat() if j.finished_at else None,
-            'runtime_seconds': j.runtime_seconds,
-            'error_message': j.error_message,
-            'exit_code': j.exit_code,
-            'output_path': bool(j.output_path),
-        }
+    job, error = jobs_utils.get_job_or_403(current_app.db_session, job_id,
+                                            current_user.id, current_user.is_admin)
+    if not job:
+        return jsonify({'error': 'Forbidden' if error == 403 else 'Not found'}), error
 
     def generate():
         last_status = job.status
@@ -292,7 +257,7 @@ def job_events(job_id):
 
             if job.status != last_status:
                 last_status = job.status
-                yield f"event: status\ndata: {json.dumps(_job_status_data(job))}\n\n"
+                yield f"event: status\ndata: {json.dumps(jobs_utils.job_status_dict(job))}\n\n"
 
             if job.output_path:
                 try:
