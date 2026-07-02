@@ -7,7 +7,7 @@ from retrobridge.jobs import jobs_bp
 from retrobridge.jobs.forms import JobUploadForm
 from retrobridge.jobs.utils import (
     cancel_job, check_rate_limit, create_job, get_device_choices,
-    get_job_or_403, get_user_quota, load_output_content,
+    get_device_stats, get_job_or_403, get_user_quota, load_output_content,
 )
 from retrobridge.models import Job
 
@@ -31,31 +31,52 @@ def dashboard():
 @login_required
 def new():
     from flask import current_app
+    from retrobridge.admin.settings_utils import get_int
 
     form = JobUploadForm()
     _, devices = get_device_choices(current_app.db_session)
     form.device_id.choices = get_device_choices(current_app.db_session)[0]
 
+    device_stats = get_device_stats(current_app.db_session)
+    queued_running, max_quota, _ = get_user_quota(
+        current_app.db_session, current_user)
+    rate_limited, max_per_hour = check_rate_limit(
+        current_app.db_session, current_user.id)
+    last_job = (
+        current_app.db_session.query(Job)
+        .filter_by(user_id=current_user.id)
+        .order_by(Job.created_at.desc())
+        .first()
+    )
+    max_upload = get_int('MAX_UPLOAD_SIZE_BYTES') or (8 * 1024 * 1024)
+
+    ctx = dict(
+        form=form,
+        device_stats=device_stats,
+        quota_used=queued_running,
+        quota_max=max_quota,
+        last_job=last_job,
+        max_per_hour=max_per_hour,
+        max_upload_bytes=max_upload,
+        max_upload_mb=max_upload // (1024 * 1024),
+    )
+
     if form.validate_on_submit():
         file = form.file.data
         device_id = form.device_id.data
 
-        rate_limited, max_per_hour = check_rate_limit(
-            current_app.db_session, current_user.id)
-        if rate_limited:
+        if check_rate_limit(current_app.db_session, current_user.id)[0]:
             flash(
                 f'Rate limit reached: {max_per_hour} jobs per hour. '
                 'Please wait before submitting another job.',
                 'danger',
             )
-            return render_template('jobs/new.html', form=form,
-                                   devices=devices)
+            return render_template('jobs/new.html', **ctx)
 
         _, _, exceeded = get_user_quota(current_app.db_session, current_user)
         if exceeded:
             flash('You have reached your maximum number of queued/running jobs.', 'danger')
-            return render_template('jobs/new.html', form=form,
-                                   devices=devices)
+            return render_template('jobs/new.html', **ctx)
 
         filename = file.filename or 'program.bin'
         try:
@@ -63,16 +84,18 @@ def new():
                 current_app.db_session, current_user.id, device_id,
                 filename, file, current_app.config['UPLOAD_DIR'],
                 priority=form.priority.data or 0,
+                newline_mode=form.newline_mode.data or '',
+                pre_transfer_cmds=form.pre_transfer_cmds.data or '',
+                post_transfer_cmds=form.post_transfer_cmds.data or '',
             )
         except ValueError as e:
             flash(str(e), 'danger')
-            return render_template('jobs/new.html', form=form,
-                                   devices=devices)
+            return render_template('jobs/new.html', **ctx)
 
         flash(f'Job #{job.id} submitted successfully.', 'success')
         return redirect(url_for('jobs.detail', job_id=job.id))
 
-    return render_template('jobs/new.html', form=form, devices=devices)
+    return render_template('jobs/new.html', **ctx)
 
 
 @jobs_bp.route('/<int:job_id>')

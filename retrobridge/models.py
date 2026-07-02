@@ -112,6 +112,9 @@ class Job(Base):
     output_path = Column(String(512), nullable=True)
     error_message = Column(Text, nullable=True)
     worker_pid = Column(Integer, nullable=True)
+    override_newline_mode = Column(String(4), nullable=True)
+    override_pre_transfer_cmds = Column(Text, nullable=True)
+    override_post_transfer_cmds = Column(Text, nullable=True)
 
     user = relationship('User', back_populates='jobs')
     device = relationship('Device', back_populates='jobs')
