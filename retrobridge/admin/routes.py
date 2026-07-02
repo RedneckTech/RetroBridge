@@ -577,6 +577,7 @@ SETTING_MAP = {
     'worker_poll_seconds': ('WORKER_POLL_SECONDS', str),
     'registration_open': ('REGISTRATION_OPEN', lambda v: '1' if v else '0'),
     'maintenance_mode': ('MAINTENANCE_MODE', lambda v: '1' if v else '0'),
+    'terminal_session_log_enabled': ('TERMINAL_SESSION_LOG_ENABLED', lambda v: '1' if v else '0'),
 }
 
 SETTING_REVERSE = {
@@ -589,6 +590,7 @@ SETTING_REVERSE = {
     'WORKER_POLL_SECONDS': int,
     'REGISTRATION_OPEN': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
     'MAINTENANCE_MODE': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
+    'TERMINAL_SESSION_LOG_ENABLED': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
 }
 
 

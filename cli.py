@@ -162,6 +162,7 @@ def register_cli_commands(app):
             'WORKER_POLL_SECONDS': ('5', 'Worker poll interval in seconds'),
             'REGISTRATION_OPEN': ('1', 'Whether new user registration is allowed'),
             'MAINTENANCE_MODE': ('0', 'Site-wide maintenance mode toggle'),
+            'TERMINAL_SESSION_LOG_ENABLED': ('0', 'Log keystrokes and output for terminal sessions'),
         }
         for key, (value, desc) in default_settings.items():
             if not s.get(AdminSetting, key):

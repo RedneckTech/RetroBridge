@@ -9,10 +9,12 @@ Each active session has:
   - A pyserial Serial object connected to the RS-232 port
   - A background thread that reads from serial and emits via SocketIO
   - Timeout timers for idle and max session duration
+  - Optional per-session keystroke/output log file
 """
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -25,6 +27,31 @@ logger = logging.getLogger(__name__)
 
 _active_bridges = {}
 _lock = threading.Lock()
+
+
+def _session_log_path(session_id):
+    from flask import current_app
+    log_dir = current_app.config.get('SESSION_LOG_DIR', 'session_logs')
+    session_dir = os.path.join(log_dir, f'session-{session_id}')
+    os.makedirs(session_dir, exist_ok=True)
+    return os.path.join(session_dir, 'terminal.log')
+
+
+def _session_logging_enabled():
+    try:
+        from retrobridge.admin.settings_utils import get_bool
+        return get_bool('TERMINAL_SESSION_LOG_ENABLED')
+    except Exception:
+        return False
+
+
+def _log_line(log_file, line, direction):
+    ts = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    try:
+        log_file.write(f'[{ts}] [{direction}] {line}\n')
+        log_file.flush()
+    except Exception:
+        pass
 
 
 def get_serial_params(port):
@@ -92,6 +119,8 @@ def _serial_reader(socketio, sid, ser, session_id):
                                   namespace='/terminal', to=sid)
                     bridge['bytes_received'] += len(data)
                     bridge['last_activity'] = time.time()
+                    if bridge.get('log_file'):
+                        _log_line(bridge['log_file'], decoded, 'RX')
             else:
                 time.sleep(0.05)
         except (SerialException, OSError) as e:
@@ -141,7 +170,17 @@ def start_bridge(socketio, sid, session, port):
             'start_time': time.time(),
             'max_runtime': port.max_runtime_seconds or 3600,
             'idle_timeout': port.idle_timeout_seconds or 300,
+            'log_file': None,
         }
+
+        if _session_logging_enabled():
+            try:
+                log_path = _session_log_path(session.id)
+                bridge['log_file'] = open(log_path, 'a', encoding='utf-8', errors='replace')
+                msg = f'Session #{session.id} started on {port.dev_path}'
+                _log_line(bridge['log_file'], msg, 'SYS')
+            except Exception as e:
+                logger.warning(f'Could not open session log: {e}')
 
         thread = threading.Thread(
             target=_serial_reader,
@@ -173,6 +212,13 @@ def stop_bridge(socketio, sid, reason='user_disconnect', db_session=None):
         except Exception:
             pass
 
+    if bridge.get('log_file'):
+        try:
+            _log_line(bridge['log_file'], f'Session ended: {reason}', 'SYS')
+            bridge['log_file'].close()
+        except Exception:
+            pass
+
     if db_session is None:
         from flask import current_app
         db_session = current_app.db_session
@@ -197,6 +243,8 @@ def write_to_serial(sid, data):
         ser.write(encoded)
         bridge['bytes_sent'] += len(encoded)
         bridge['last_activity'] = time.time()
+        if bridge.get('log_file'):
+            _log_line(bridge['log_file'], data, 'TX')
         return True
     except SerialException:
         return False
