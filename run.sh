@@ -23,14 +23,10 @@ needs_recreate() {
     if [ ! -f "$1" ]; then
         return 0
     fi
-    # Check for a known column to detect stale schema
-    python3 -c "
-import sqlite3
-conn = sqlite3.connect('$1')
-cur = conn.cursor()
-cur.execute(\"SELECT transport FROM device_ports LIMIT 0\")
-conn.close()
-" 2>/dev/null
+    if python3 -m retrobridge.schema_check "$1" 2>/dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 if [ -f "$DB_FILE" ]; then

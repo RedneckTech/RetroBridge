@@ -1,37 +1,348 @@
 {% extends "base.html" %}
-{% block title %}New Job{% endblock %}
+{% block title %}Submit New Job{% endblock %}
+{% block head %}
+<style>
+.device-card { cursor: pointer; transition: all 0.15s; border: 2px solid transparent; }
+.device-card:hover { border-color: var(--bs-primary); }
+.device-card.selected { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), 0.05); }
+.device-card.busy { opacity: 0.7; }
+.drop-zone {
+    border: 2px dashed var(--bs-secondary);
+    border-radius: 8px;
+    padding: 2.5rem;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.drop-zone.drag-over { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), 0.05); }
+.drop-zone.has-file { border-style: solid; border-color: var(--bs-success); }
+.quota-bar { height: 8px; border-radius: 4px; transition: width 0.3s; }
+.cmd-preview { font-family: monospace; font-size: 0.85rem; max-height: 120px; overflow-y: auto; }
+.last-job-card { border-left: 3px solid var(--bs-info); }
+</style>
+{% endblock %}
 {% block content %}
+<div id="new-job-page">
 <h2>Submit New Job</h2>
-<div class="row">
+
+{# ── Quota & Rate Limit Bar ──────────────────────────────────────────────── #}
+<div class="row mb-3 g-2">
     <div class="col-md-6">
-        <form method="POST" enctype="multipart/form-data">
-            {{ form.hidden_tag() }}
-            <div class="mb-3">
-                {{ form.device_id.label(class="form-label") }}
-                {{ form.device_id(class="form-select" + (" is-invalid" if form.device_id.errors else "")) }}
-                {% for error in form.device_id.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
+        <div class="card bg-light">
+            <div class="card-body py-2 px-3">
+                <small class="text-muted">Job Quota</small>
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="fw-bold small">{{ quota_used }} / {{ quota_max }} used</span>
+                    <span class="badge bg-{{ 'danger' if quota_used >= quota_max else 'warning' if quota_used >= quota_max * 0.8 else 'success' }}">
+                        {{ 'Full' if quota_used >= quota_max else 'Available' }}
+                    </span>
+                </div>
+                <div class="progress" style="height: 6px;">
+                    <div class="progress-bar bg-{{ 'danger' if quota_used >= quota_max else 'warning' if quota_used >= quota_max * 0.8 else 'success' }}"
+                         style="width: {{ (quota_used / quota_max * 100) if quota_max > 0 else 0 }}%"></div>
+                </div>
             </div>
-            <div class="mb-3">
-                {{ form.file.label(class="form-label") }}
-                {{ form.file(class="form-control" + (" is-invalid" if form.file.errors else "")) }}
-                {% for error in form.file.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
-                <div class="form-text">Accepted: .bin, .hex, .obj, .asm, .s, .txt (max 8 MB)</div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-light">
+            <div class="card-body py-2 px-3">
+                <small class="text-muted">Rate Limit</small>
+                <div>
+                    <span class="fw-bold small">{{ max_per_hour if max_per_hour else '∞' }} jobs/hour</span>
+                </div>
+                <small class="text-muted">Per-user hourly submission cap</small>
             </div>
-            <div class="mb-3">
-                {{ form.priority.label(class="form-label") }}
-                {{ form.priority(class="form-control" + (" is-invalid" if form.priority.errors else "")) }}
-                {% for error in form.priority.errors %}
-                <div class="invalid-feedback">{{ error }}</div>
-                {% endfor %}
-                <div class="form-text">Higher priority jobs run first (0-9)</div>
-            </div>
-            {{ form.submit(class="btn btn-primary") }}
-            <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-outline-secondary">Cancel</a>
-        </form>
+        </div>
     </div>
 </div>
+
+{# ── Device Cards ────────────────────────────────────────────────────────── #}
+<h5>Select Target Device</h5>
+<div class="row mb-3" id="device-cards">
+    {% for d in device_stats %}
+    <div class="col-md-6 col-lg-4 mb-2">
+        <div class="card device-card {{ 'busy' if d.queue_count > 3 }}"
+             data-device-id="{{ d.id }}"
+             data-device-name="{{ d.display_name }}"
+             onclick="selectDevice(this, {{ d.id }})">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="card-title mb-1">{{ d.display_name }}</h6>
+                        <small class="text-muted">{{ d.name }}</small>
+                    </div>
+                    <span class="badge bg-{{ 'success' if d.interactive_available > 0 else 'secondary' }}">
+                        {{ d.interactive_available }}/{{ d.interactive_ports }} term
+                    </span>
+                </div>
+                <div class="mt-2 d-flex gap-2">
+                    {% if d.queue_count > 0 %}
+                    <small class="text-warning">⏳ {{ d.queue_count }} queued</small>
+                    {% endif %}
+                    {% if d.running_count > 0 %}
+                    <small class="text-info">⚡ {{ d.running_count }} running</small>
+                    {% endif %}
+                    {% if d.queue_count == 0 and d.running_count == 0 %}
+                    <small class="text-success">✓ Idle</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% if form.device_id.errors %}
+<div class="text-danger small mb-2">Please select a device.</div>
+{% endif %}
+
+{# ── Selected Device Info ────────────────────────────────────────────────── #}
+<div id="device-info" class="d-none mb-3">
+    <div class="card bg-light">
+        <div class="card-body py-2 px-3">
+            <div class="row">
+                <div class="col-md-4">
+                    <small class="text-muted">Transfer protocol:</small>
+                    <strong id="info-protocol">-</strong>
+                </div>
+                <div class="col-md-4">
+                    <small class="text-muted">Default newline:</small>
+                    <strong id="info-newline">-</strong>
+                </div>
+                <div class="col-md-4">
+                    <small class="text-muted">Queue position:</small>
+                    <strong id="info-queue-pos">-</strong>
+                </div>
+            </div>
+            <div id="info-pre-cmds" class="mt-2 d-none">
+                <small class="text-muted">Pre-transfer commands:</small>
+                <pre class="cmd-preview bg-dark text-light p-2 rounded mb-0" id="info-pre-text"></pre>
+            </div>
+            <div id="info-post-cmds" class="mt-1 d-none">
+                <small class="text-muted">Post-transfer commands:</small>
+                <pre class="cmd-preview bg-dark text-light p-2 rounded mb-0" id="info-post-text"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<form method="POST" enctype="multipart/form-data" id="upload-form">
+    {{ form.hidden_tag() }}
+    <input type="hidden" name="device_id" id="device-id-input" value="{{ form.device_id.data or '' }}">
+
+    {# ── Drag & Drop Upload ──────────────────────────────────────────────── #}
+    <div class="mb-3">
+        <label class="form-label fw-bold">Program File</label>
+        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+            <div id="drop-placeholder">
+                <div style="font-size: 2rem;">📁</div>
+                <p class="mb-1 mt-2">Drop your file here or <strong>browse</strong></p>
+                <small class="text-muted">.bin .hex .obj .asm .s .txt — max {{ max_upload_mb }} MB</small>
+            </div>
+            <div id="file-selected" class="d-none">
+                <div style="font-size: 2rem;">📄</div>
+                <p class="mb-1 mt-2"><strong id="file-name"></strong></p>
+                <small class="text-muted" id="file-size"></small>
+                <br><a href="#" class="small" onclick="event.stopPropagation(); clearFile(); return false;">Remove</a>
+            </div>
+        </div>
+        {{ form.file(id='file-input', class='d-none', accept='.bin,.hex,.obj,.asm,.s,.txt') }}
+        {% for error in form.file.errors %}
+        <div class="text-danger small mt-1">{{ error }}</div>
+        {% endfor %}
+    </div>
+
+    {# ── Priority Slider ──────────────────────────────────────────────────── #}
+    <div class="mb-3">
+        <label class="form-label fw-bold">Priority</label>
+        <div class="d-flex align-items-center gap-3">
+            <span class="small text-muted">Low</span>
+            <input type="range" class="form-range flex-grow-1" name="priority"
+                   min="0" max="9" value="{{ form.priority.data or 0 }}"
+                   id="priority-slider"
+                   oninput="document.getElementById('priority-val').textContent = this.value">
+            <span class="small text-muted">High</span>
+            <span class="badge bg-primary" id="priority-val">{{ form.priority.data or 0 }}</span>
+        </div>
+    </div>
+
+    {# ── Advanced Options ─────────────────────────────────────────────────── #}
+    <div class="mb-3">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                data-bs-toggle="collapse" data-bs-target="#advanced-options"
+                aria-expanded="false">
+            ⚙ Advanced Options
+        </button>
+        <div class="collapse mt-2" id="advanced-options">
+            <div class="card card-body bg-light">
+                <div class="row">
+                    <div class="col-md-4 mb-2">
+                        {{ form.newline_mode.label(class="form-label small") }}
+                        {{ form.newline_mode(class="form-select form-select-sm") }}
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-md-6 mb-2">
+                        {{ form.pre_transfer_cmds.label(class="form-label small") }}
+                        {{ form.pre_transfer_cmds(class="form-control form-control-sm", rows=2,
+                           placeholder='One command per line, e.g.\n\\r\nXMODEM R\\r') }}
+                        <div class="form-text small">Overrides the port default. Leave blank to use port settings.</div>
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        {{ form.post_transfer_cmds.label(class="form-label small") }}
+                        {{ form.post_transfer_cmds(class="form-control form-control-sm", rows=2,
+                           placeholder='One command per line, e.g.\nRUN\\r') }}
+                        <div class="form-text small">Overrides the port default. Leave blank to use port settings.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# ── Last Job Quick Re-Submit ─────────────────────────────────────────── #}
+    {% if last_job %}
+    <div class="mb-3">
+        <div class="card last-job-card bg-light">
+            <div class="card-body py-2 px-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <small class="text-muted">Last job:</small>
+                        <strong>{{ last_job.original_filename }}</strong>
+                        <span class="text-muted">→ {{ last_job.device.name if last_job.device else 'N/A' }}</span>
+                        <span class="badge bg-{{ 'success' if last_job.status == 'completed' else 'secondary' }}">
+                            {{ last_job.status }}
+                        </span>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-info"
+                            onclick="loadLastJob({{ last_job.device_id }})">
+                        Re-submit
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Submit ───────────────────────────────────────────────────────────── #}
+    <div class="d-flex gap-2">
+        {{ form.submit(class="btn btn-primary btn-lg") }}
+        <a href="{{ url_for('jobs.dashboard') }}" class="btn btn-outline-secondary btn-lg">Cancel</a>
+    </div>
+</form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ALLOWED_EXTS = ['bin','hex','obj','asm','s','txt'];
+const deviceStats = {{ device_stats|tojson }};
+
+function maxUploadBytes() {
+    return {{ max_upload_bytes }};
+}
+
+// ── Device selection ────────────────────────────────────────────────────────
+window.selectDevice = function(card, deviceId) {
+    document.querySelectorAll('.device-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    document.getElementById('device-id-input').value = deviceId;
+
+    var info = document.getElementById('device-info');
+    info.classList.remove('d-none');
+
+    var ds = deviceStats.find(function(d) { return d.id === deviceId; });
+    if (!ds) return;
+
+    var jobPort = (ds.ports || []).find(function(p) { return p.purpose === 'job_queue'; });
+    document.getElementById('info-protocol').textContent = (jobPort && jobPort.transfer_protocol) || 'xmodem';
+    document.getElementById('info-newline').textContent = (jobPort && jobPort.newline_mode) || 'crlf';
+    document.getElementById('info-queue-pos').textContent = ds.queue_count + ' ahead of you';
+
+    var preCmds = (jobPort && jobPort.pre_cmds) || '';
+    var postCmds = (jobPort && jobPort.post_cmds) || '';
+
+    var preDiv = document.getElementById('info-pre-cmds');
+    var postDiv = document.getElementById('info-post-cmds');
+    if (preCmds) {
+        preDiv.classList.remove('d-none');
+        try { preCmds = JSON.stringify(JSON.parse(preCmds), null, 2); } catch(e) {}
+        document.getElementById('info-pre-text').textContent = preCmds;
+    } else { preDiv.classList.add('d-none'); }
+
+    if (postCmds) {
+        postDiv.classList.remove('d-none');
+        try { postCmds = JSON.stringify(JSON.parse(postCmds), null, 2); } catch(e) {}
+        document.getElementById('info-post-text').textContent = postCmds;
+    } else { postDiv.classList.add('d-none'); }
+};
+
+// ── Drag & drop ─────────────────────────────────────────────────────────────
+var dropZone = document.getElementById('drop-zone');
+var fileInput = document.getElementById('file-input');
+
+['dragenter','dragover'].forEach(function(evt) {
+    dropZone.addEventListener(evt, function(e) { e.preventDefault(); dropZone.classList.add('drag-over'); });
+});
+['dragleave','drop'].forEach(function(evt) {
+    dropZone.addEventListener(evt, function(e) { e.preventDefault(); dropZone.classList.remove('drag-over'); });
+});
+
+dropZone.addEventListener('drop', function(e) {
+    var files = e.dataTransfer.files;
+    if (files.length) setFile(files[0]);
+});
+
+fileInput.addEventListener('change', function() {
+    if (this.files.length) setFile(this.files[0]);
+});
+
+function setFile(file) {
+    var ext = file.name.split('.').pop().toLowerCase();
+    if (ALLOWED_EXTS.indexOf(ext) === -1) {
+        alert('Invalid file type: .' + ext + '\nAllowed: .bin, .hex, .obj, .asm, .s, .txt');
+        return;
+    }
+    if (file.size > maxUploadBytes()) {
+        alert('File is too large (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). Maximum is ' + (maxUploadBytes() / 1024 / 1024) + ' MB.');
+        return;
+    }
+    var dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+
+    document.getElementById('drop-placeholder').classList.add('d-none');
+    document.getElementById('file-selected').classList.remove('d-none');
+    dropZone.classList.add('has-file');
+    document.getElementById('file-name').textContent = file.name;
+    document.getElementById('file-size').textContent = (file.size / 1024).toFixed(1) + ' KB';
+}
+
+window.clearFile = function() {
+    fileInput.value = '';
+    document.getElementById('drop-placeholder').classList.remove('d-none');
+    document.getElementById('file-selected').classList.add('d-none');
+    dropZone.classList.remove('has-file');
+};
+
+// ── Last job re-submit ──────────────────────────────────────────────────────
+window.loadLastJob = function(deviceId) {
+    var card = document.querySelector('.device-card[data-device-id="' + deviceId + '"]');
+    if (card) selectDevice(card, deviceId);
+};
+
+// ── Form validation before submit ───────────────────────────────────────────
+document.getElementById('upload-form').addEventListener('submit', function(e) {
+    var deviceId = document.getElementById('device-id-input').value;
+    if (!deviceId) {
+        e.preventDefault();
+        alert('Please select a target device.');
+        return;
+    }
+    if (!fileInput.files.length) {
+        e.preventDefault();
+        alert('Please select a file to upload.');
+        return;
+    }
+});
+</script>
 {% endblock %}

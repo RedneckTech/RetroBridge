@@ -163,7 +163,8 @@ def check_rate_limit(db_session, user_id):
 
 
 def create_job(db_session, user_id, device_id, filename, file_obj,
-               upload_dir, priority=0):
+               upload_dir, priority=0, newline_mode='',
+               pre_transfer_cmds='', post_transfer_cmds=''):
     safe_name = secure_filename(filename or 'program.bin')
 
     validate_file_content(file_obj, safe_name)
@@ -186,6 +187,9 @@ def create_job(db_session, user_id, device_id, filename, file_obj,
         original_filename=safe_name,
         status='queued',
         priority=priority or 0,
+        override_newline_mode=newline_mode or None,
+        override_pre_transfer_cmds=pre_transfer_cmds or None,
+        override_post_transfer_cmds=post_transfer_cmds or None,
     )
     db_session.add(job)
     db_session.flush()
@@ -247,3 +251,42 @@ def read_output_tail(output_path, tail=None):
             return [l.rstrip('\n') for l in lines]
     except FileNotFoundError:
         return []
+
+
+def get_device_stats(db_session):
+    from retrobridge.models import Device, DevicePort, TerminalSession
+    devices = db_session.query(Device).filter_by(is_enabled=True).order_by(Device.name).all()
+    stats = []
+    for d in devices:
+        ports = db_session.query(DevicePort).filter_by(device_id=d.id).all()
+        job_ports = [p for p in ports if p.purpose == 'job_queue']
+        interactive_ports = [p for p in ports if p.purpose == 'interactive' and p.is_enabled]
+        active_sessions = db_session.query(TerminalSession).filter_by(
+            device_id=d.id, status='active').count()
+        queue_count = db_session.query(Job).filter_by(
+            device_id=d.id, status='queued').count()
+        running_count = db_session.query(Job).filter_by(
+            device_id=d.id, status='running').count()
+        stats.append({
+            'id': d.id,
+            'name': d.name,
+            'display_name': d.display_name or d.name,
+            'is_enabled': d.is_enabled,
+            'queue_count': queue_count,
+            'running_count': running_count,
+            'interactive_ports': len(interactive_ports),
+            'interactive_available': max(0, len(interactive_ports) - active_sessions),
+            'job_ports': len(job_ports),
+            'ports': [{
+                'label': p.port_label,
+                'purpose': p.purpose,
+                'baud': p.baud,
+                'transport': p.transport or 'serial',
+                'is_enabled': p.is_enabled,
+                'pre_cmds': p.pre_transfer_cmds,
+                'post_cmds': p.post_transfer_cmds,
+                'newline_mode': p.newline_mode,
+                'transfer_protocol': p.transfer_protocol,
+            } for p in ports],
+        })
+    return stats
