@@ -229,6 +229,29 @@ def stop_bridge(socketio, sid, reason='user_disconnect', db_session=None):
                   namespace='/terminal', to=sid)
 
 
+def find_bridge_sid(session_id):
+    with _lock:
+        for sid, bridge in _active_bridges.items():
+            if bridge.get('session_id') == session_id and bridge['running']:
+                return sid
+    return None
+
+
+def force_disconnect_session(socketio, session_id, db_session=None):
+    sid = find_bridge_sid(session_id)
+    if sid:
+        stop_bridge(socketio, sid, reason='admin_force',
+                    db_session=db_session)
+        return True
+
+    if db_session is None:
+        from flask import current_app
+        db_session = current_app.db_session
+
+    end_session(db_session, session_id, reason='admin_force')
+    return False
+
+
 def write_to_serial(sid, data):
     bridge = _active_bridges.get(sid)
     if not bridge or not bridge['running']:

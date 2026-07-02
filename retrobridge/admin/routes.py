@@ -543,26 +543,18 @@ def sessions():
 @admin_required
 def bulk_disconnect():
     from flask import current_app
-    from datetime import datetime, timezone
 
     ids = request.form.getlist('session_ids')
     count = 0
     for sid in ids:
         session = current_app.db_session.get(TerminalSession, int(sid))
         if session and session.status == 'active':
-            session.status = 'disconnected'
-            session.disconnect_reason = 'admin_force'
-            session.disconnected_at = datetime.now(timezone.utc)
-            if session.connected_at:
-                connected = session.connected_at
-                if connected.tzinfo is None:
-                    from datetime import timezone as tz
-                    connected = connected.replace(tzinfo=tz.utc)
-                session.duration_seconds = int(
-                    (datetime.now(timezone.utc) - connected).total_seconds()
-                )
+            from retrobridge.terminal import utils as terminal_utils
+            from retrobridge import socketio
+            terminal_utils.force_disconnect_session(
+                socketio, session.id, db_session=current_app.db_session,
+            )
             count += 1
-    current_app.db_session.commit()
     flash(f'{count} session(s) disconnected.', 'info')
     return redirect(url_for('admin.sessions'))
 

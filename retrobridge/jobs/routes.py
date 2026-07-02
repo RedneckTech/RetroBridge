@@ -58,11 +58,16 @@ def new():
                                    devices=devices)
 
         filename = file.filename or 'program.bin'
-        job = create_job(
-            current_app.db_session, current_user.id, device_id,
-            filename, file, current_app.config['UPLOAD_DIR'],
-            priority=form.priority.data or 0,
-        )
+        try:
+            job = create_job(
+                current_app.db_session, current_user.id, device_id,
+                filename, file, current_app.config['UPLOAD_DIR'],
+                priority=form.priority.data or 0,
+            )
+        except ValueError as e:
+            flash(str(e), 'danger')
+            return render_template('jobs/new.html', form=form,
+                                   devices=devices)
 
         flash(f'Job #{job.id} submitted successfully.', 'success')
         return redirect(url_for('jobs.detail', job_id=job.id))
