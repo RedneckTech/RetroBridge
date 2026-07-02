@@ -192,11 +192,11 @@ def disconnect_session(session_id):
     if not session or session.status != 'active':
         return jsonify({'success': False, 'message': 'Session not found or not active'}), 404
 
-    session.status = 'disconnected'
-    session.disconnect_reason = 'admin_force'
-    from datetime import datetime, timezone
-    session.disconnected_at = datetime.now(timezone.utc)
-    current_app.db_session.commit()
+    from retrobridge.terminal import utils as terminal_utils
+    from retrobridge import socketio
+    terminal_utils.force_disconnect_session(
+        socketio, session_id, db_session=current_app.db_session,
+    )
 
     return jsonify({'success': True, 'message': 'Session terminated'})
 
