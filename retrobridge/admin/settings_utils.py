@@ -16,6 +16,7 @@ SETTING_DEFAULTS = {
     'WORKER_POLL_SECONDS': ('5', int),
     'REGISTRATION_OPEN': ('1', bool),
     'MAINTENANCE_MODE': ('0', bool),
+    'TERMINAL_SESSION_LOG_ENABLED': ('0', bool),
 }
 
 

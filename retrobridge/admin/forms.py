@@ -104,4 +104,5 @@ class SettingsForm(FlaskForm):
     )
     registration_open = BooleanField('Allow New User Registration')
     maintenance_mode = BooleanField('Maintenance Mode')
+    terminal_session_log_enabled = BooleanField('Log Terminal Session Keystrokes/Output')
     submit = SubmitField('Save Settings')
