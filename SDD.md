@@ -54,6 +54,9 @@
    - 7.3 [Interactive Terminal Session Flow](#73-interactive-terminal-session-flow)
    - 7.4 [PTY Simulation for Development Testing](#74-pty-simulation-for-development-testing)
    - 7.5 [Admin Operations](#75-admin-operations)
+   - 7.6 [Discord Webhook Notifications](#76-discord-webhook-notifications)
+   - 7.7 [Patreon Tier-Gating and Supporter Badges](#77-patreon-tier-gating-and-supporter-badges)
+   - 7.8 [Email Notification System](#78-email-notification-system)
 8. [Deployment Design](#8-deployment-design)
    - 8.1 [Directory Structure](#81-directory-structure)
    - 8.2 [systemd Service Units](#82-systemd-service-units)
@@ -442,11 +445,17 @@ Worker Processes (systemd units)
 | `email`                 | String(120) | UNIQUE, NOT NULL           |
 | `password_hash`         | String(256) | NOT NULL                   |
 | `full_name`             | String(128) | Nullable                   |
+| `bio`                   | Text        | Nullable                   |
+| `preferences`           | Text        | Nullable (JSON blob for terminal font/scheme, etc.) |
 | `is_admin`              | Boolean     | Default False              |
 | `max_queued_jobs`       | Integer     | Default 3                  |
 | `max_terminal_sessions` | Integer     | Default 1                  |
 | `created_at`            | DateTime    | Default `datetime.utcnow`  |
 | `last_login`            | DateTime    | Nullable                   |
+| `patreon_tier`          | String(32)  | Nullable (Patreon membership tier name) |
+| `patreon_id`            | String(64)  | Nullable (Patreon user ID)            |
+| `email_notify_jobs`     | Boolean     | Default False (opt-in job completion emails) |
+| `email_notify_security` | Boolean     | Default True (new-login alerts, password changes) |
 
 **Relationships:** `User.jobs` — one-to-many to `Job` (`user_id` FK). `User.terminal_sessions` — one-to-many to `TerminalSession` (`user_id` FK).
 
@@ -554,7 +563,27 @@ Each Device has multiple RS-232 ports. Each port is assigned a `purpose` that de
 | `value`       | Text        | NOT NULL    |
 | `description` | String(256) | Nullable    |
 
-**Default keys:** `MAX_UPLOAD_SIZE_BYTES` (8388608), `DEFAULT_MAX_QUEUED_JOBS` (3), `DEFAULT_MAX_TERMINAL_SESSIONS` (1), `IDLE_SLEEP_SECONDS` (5), `MAX_JOBS_PER_HOUR` (10), `MAX_TERMINAL_SESSION_SECONDS` (3600), `TERMINAL_IDLE_TIMEOUT_SECONDS` (300).
+**Default keys:** `MAX_UPLOAD_SIZE_BYTES` (8388608), `DEFAULT_MAX_QUEUED_JOBS` (3), `DEFAULT_MAX_TERMINAL_SESSIONS` (1), `IDLE_SLEEP_SECONDS` (5), `MAX_JOBS_PER_HOUR` (10), `MAX_TERMINAL_SESSION_SECONDS` (3600), `TERMINAL_IDLE_TIMEOUT_SECONDS` (300), `WORKER_POLL_SECONDS` (5), `REGISTRATION_OPEN` (1), `MAINTENANCE_MODE` (0), `TERMINAL_SESSION_LOG_ENABLED` (0).
+
+**Integration keys:**
+
+| Key | Default | Description |
+| --- | ------- | ----------- |
+| `DISCORD_WEBHOOK_URL` | `''` | Discord webhook URL for notifications |
+| `DISCORD_NOTIFY_JOBS` | `'1'` | Send webhook on job completed/failed |
+| `DISCORD_NOTIFY_SESSIONS` | `'1'` | Send webhook on terminal session start/end |
+| `DISCORD_NOTIFY_USERS` | `'1'` | Send webhook on new user registration |
+| `DISCORD_NOTIFY_ADMIN` | `'1'` | Send webhook on admin actions (force-cancel, user delete, settings change) |
+| `PATREON_CLIENT_ID` | `''` | Patreon API client ID |
+| `PATREON_CLIENT_SECRET` | `''` | Patreon API client secret |
+| `PATREON_CAMPAIGN_ID` | `''` | Patreon campaign ID for tier lookups |
+| `EMAIL_SMTP_HOST` | `''` | SMTP server hostname |
+| `EMAIL_SMTP_PORT` | `'587'` | SMTP server port |
+| `EMAIL_SMTP_USER` | `''` | SMTP authentication username |
+| `EMAIL_SMTP_PASSWORD` | `''` | SMTP authentication password |
+| `EMAIL_USE_TLS` | `'1'` | Use STARTTLS for SMTP |
+| `EMAIL_FROM_ADDRESS` | `'noreply@retrobridge.local'` | From address for notification emails |
+| `EMAIL_FROM_NAME` | `'RetroBridge'` | From display name for notification emails |
 
 ### 5.7 TerminalSession Model
 
@@ -635,6 +664,14 @@ Each Device has multiple RS-232 ports. Each port is assigned a `purpose` that de
 | `POST`   | `/api/sessions/<id>/disconnect` | admin        | —                                                                     | `{ "success": true, "message": "Session terminated" }`                                                                                                                                               |
 | `POST`   | `/api/admin/jobs/<id>/cancel`   | admin        | JSON: `{ "force": true }`                                             | `{ "success": true, "message": "Job force-canceled" }`                                                                                                                                               |
 | `DELETE` | `/api/admin/users/<id>`         | admin        | —                                                                     | `{ "success": true }` or `{ "success": false, "message": "Cannot delete self" }`                                                                                                                     |
+| `GET`    | `/api/jobs/<id>/events`         | user (owner) | —                                                                     | `text/event-stream` (SSE): `event: status`, `event: output`, `event: done`                                                                                                                          |
+| `GET`    | `/api/check-username`           | none         | Query: `?username=...`                                                | `{ "available": bool, "message": str }`                                                                                                                                                              |
+| `GET`    | `/auth/profile/patreon/link`    | user         | —                                                                     | Redirect (302) to Patreon OAuth                                                                                                                                                                      |
+| `GET`    | `/auth/profile/patreon/callback` | none (OAuth) | Query: `?code=...&state=...`                                          | Redirect (302) to profile page on success, or error flash on failure                                                                                                                                 |
+| `POST`   | `/auth/profile/patreon/unlink`  | user         | —                                                                     | `{ "success": true }`                                                                                                                                                                                |
+| `GET`    | `/auth/profile/discord/link`   | user         | —                                                                     | Redirect (302) to Discord OAuth                                                                                                                                                                       |
+| `GET`    | `/auth/profile/discord/callback` | none (OAuth) | Query: `?code=...&state=...`                                          | Redirect (302) to profile page on success                                                                                                                                                             |
+| `POST`   | `/auth/profile/discord/unlink` | user         | —                                                                     | `{ "success": true }`                                                                                                                                                                                |
 
 ### 6.2 WebSocket API (Flask-SocketIO)
 
@@ -939,6 +976,280 @@ Since no vintage hardware is available during initial development, the system su
 - Form renders all `AdminSetting` rows as labeled fields
 - Editable keys: `MAX_UPLOAD_SIZE_BYTES`, `DEFAULT_MAX_QUEUED_JOBS`, `DEFAULT_MAX_TERMINAL_SESSIONS`, `IDLE_SLEEP_SECONDS`, `MAX_JOBS_PER_HOUR`, `MAX_TERMINAL_SESSION_SECONDS`, `TERMINAL_IDLE_TIMEOUT_SECONDS`
 - On save, values are written to the `adminsetting` table; workers and routes read from this table at runtime
+
+---
+
+### 7.6 Discord Webhook Notifications
+
+RetroBridge can send notifications to a Discord channel via webhooks. The admin configures a webhook URL and toggles which event types trigger notifications.
+
+**Configuration (Admin Settings):**
+
+| Setting | Purpose |
+| ------- | ------- |
+| `DISCORD_WEBHOOK_URL` | Discord webhook endpoint URL |
+| `DISCORD_NOTIFY_JOBS` | Notify on job completed / failed |
+| `DISCORD_NOTIFY_SESSIONS` | Notify on terminal session start / end |
+| `DISCORD_NOTIFY_USERS` | Notify on new user registration |
+| `DISCORD_NOTIFY_ADMIN` | Notify on admin actions (force-cancel, settings change) |
+
+**Notification Payload Format:**
+
+All messages use Discord embed objects with color-coded sidebars:
+- Green — success (job completed, session started, user registered)
+- Red — error (job failed, session error)
+- Yellow — admin action (settings changed, force-cancel, maintenance toggled)
+
+**Job Notifications:**
+
+Sent when a job transitions to `completed` or `failed`:
+
+```
+Embed:
+  Title:   Job #42 — Completed  ✅
+  Fields:
+    User     jsmith
+    Device   Centurion CPU-6
+    Program  calc.bin
+    Runtime  12s
+    Exit     0
+  Footer:  RetroBridge • 2026-07-02 14:22:08 UTC
+```
+
+**Session Notifications:**
+
+Sent when a terminal session starts and when it ends:
+
+```
+Embed:
+  Title:   Terminal Session Started  🖥️
+  Fields:
+    User      jsmith
+    Device    Centurion CPU-6
+    Port      TTY1 (interactive)
+  Footer:  RetroBridge • 2026-07-02 14:22:08 UTC
+```
+
+```
+Embed:
+  Title:   Terminal Session Ended  🔌
+  Fields:
+    User      jsmith
+    Device    Centurion CPU-6
+    Duration  45m 12s
+    Reason    user_disconnect
+  Footer:  RetroBridge • 2026-07-02 15:07:20 UTC
+```
+
+**User Registration Notifications:**
+
+Sent when a new user registers:
+
+```
+Embed:
+  Title:   New User Registered  👤
+  Fields:
+    Username  jsmith
+    Email     jsmith@example.com
+  Footer:  RetroBridge • 2026-07-02 14:22:08 UTC
+```
+
+**Admin Action Notifications:**
+
+Sent for significant admin actions: job force-cancel, user deletion, settings changes, maintenance mode toggle.
+
+```
+Embed:
+  Title:   Admin Action  ⚙️
+  Fields:
+    Admin     admin
+    Action    Force-canceled Job #42
+    Target    jsmith / calc.bin
+  Footer:  RetroBridge • 2026-07-02 14:22:08 UTC
+```
+
+**Implementation:**
+
+- `retrobridge/integrations/discord.py` provides `send_discord_notification(event_type, embed_data)` which reads the webhook URL from `AdminSetting` and fires an HTTP POST.
+- Notifications are fire-and-forget — a failure to deliver does not block the triggering action.
+- Each notification event runs in a background thread to avoid delaying the HTTP response.
+
+#### Discord Account Linking (OAuth)
+
+Users can optionally link their Discord account to RetroBridge. A linked Discord account enables:
+- Discord username display on the user's profile and in admin user lists
+- Discord avatar as an alternate avatar source
+- Future: DM notifications for job completion (per-user opt-in)
+
+**Linking Flow:**
+
+1. User navigates to **Profile → Discord Integration** and clicks **Link Discord Account**.
+2. Browser redirects to Discord OAuth authorization (`https://discord.com/oauth2/authorize`).
+3. User approves; Discord redirects back to `/auth/profile/discord/callback?code=...`.
+4. Server exchanges the code for an access token, fetches the user's Discord profile (`/users/@me`), stores `discord_id` and `discord_username`, and redirects to the profile page.
+5. The server does **not** store the Discord access token long-term — only the identity fields.
+
+**Unlinking:**
+
+1. User clicks **Unlink Discord Account** on the profile page.
+2. Server clears `discord_id`, `discord_username`, and the avatar falls back to Gravatar.
+
+**User Model Fields:**
+
+| Column | Type | Constraints |
+| ------ | ---- | ----------- |
+| `discord_id` | String(32) | Nullable, UNIQUE (Discord user snowflake ID) |
+| `discord_username` | String(64) | Nullable (Discord username#discriminator or modern display name) |
+
+**Avatar Priority:**
+
+When both Discord and Gravatar are available:
+1. Discord avatar (if linked) — fetched from `https://cdn.discordapp.com/avatars/{discord_id}/{avatar_hash}.png`
+2. Gravatar (default) — current `User.avatar_url()`
+
+**Admin Settings:**
+
+| Key | Default | Purpose |
+| --- | ------- | ------- |
+| `DISCORD_CLIENT_ID` | `''` | Discord OAuth application client ID |
+| `DISCORD_CLIENT_SECRET` | `''` | Discord OAuth application client secret |
+
+If `DISCORD_CLIENT_ID` is empty, Discord account linking is hidden from the profile page (feature disabled).
+
+**API Endpoints:**
+
+| Method | Path | Auth | Purpose |
+| ------ | ---- | ---- | ------- |
+| `GET` | `/auth/profile/discord/link` | user | Redirect to Discord OAuth authorization |
+| `GET` | `/auth/profile/discord/callback` | none (OAuth) | Handle OAuth callback, store identity |
+| `POST` | `/auth/profile/discord/unlink` | user | Remove Discord account association |
+
+**Scopes requested:** `identify` (read username, avatar, and snowflake ID). No `email` or `guilds` access is requested.
+
+---
+
+### 7.7 Patreon Tier-Gating and Supporter Badges
+
+Users can link their RetroBridge account to their Patreon membership. Patreon tier determines feature limits; a supporter badge is displayed on the user's profile.
+
+**Linking Flow:**
+
+1. User navigates to **Profile → Patreon Integration** and clicks **Link Patreon Account**.
+2. Browser redirects to Patreon OAuth authorization page (`https://www.patreon.com/oauth2/authorize`).
+3. User approves; Patreon redirects back to `/auth/profile/patreon/callback?code=...`.
+4. Server exchanges the code for an access token and refresh token, stores `patreon_id`, looks up the user's current campaign membership tier, and stores `patreon_tier`.
+5. The tier is refreshed daily via a background task or lazily on each login.
+
+**Tier-Based Limits:**
+
+| Patreon Tier | `max_queued_jobs` Override | `max_terminal_sessions` Override | Devices Available |
+| ------------ | --------------------------- | -------------------------------- | ----------------- |
+| None (free)  | 3 (default)                 | 1 (default)                     | All                |
+| Bronze       | 10                          | 3                               | All                |
+| Silver       | 50                          | 10                              | All                |
+| Gold         | unlimited (999)             | 20                              | All                |
+
+- Tier overrides are applied at login time by comparing the user's Patreon tier to a configurable mapping stored in `AdminSetting` (e.g., `PATREON_TIER_BRONZE_JOBS=10`).
+- If a user's Patreon membership is cancelled or downgraded, their limits revert on the next tier refresh. Existing queued/running jobs and active sessions are not terminated — the new limits apply only to new submissions.
+- Admin can override tier limits per-user from the admin panel (same as current quota editing).
+
+**Supporter Badge:**
+
+- A small Patreon logo and tier name appear next to the username in the navbar and on profile pages.
+- The `User.avatar_url()` method is extended to optionally overlay a tier badge.
+- Tier names and colors are configurable per tier in `AdminSetting`.
+
+**Admin Settings:**
+
+| Key | Default | Purpose |
+| --- | ------- | ------- |
+| `PATREON_CLIENT_ID` | `''` | OAuth client ID |
+| `PATREON_CLIENT_SECRET` | `''` | OAuth client secret |
+| `PATREON_CAMPAIGN_ID` | `''` | Campaign ID for membership lookup |
+| `PATREON_TIER_BRONZE_JOBS` | `'10'` | Max jobs for Bronze tier |
+| `PATREON_TIER_BRONZE_SESSIONS` | `'3'` | Max sessions for Bronze tier |
+| `PATREON_TIER_SILVER_JOBS` | `'50'` | Max jobs for Silver tier |
+| `PATREON_TIER_SILVER_SESSIONS` | `'10'` | Max sessions for Silver tier |
+| `PATREON_TIER_GOLD_JOBS` | `'999'` | Max jobs for Gold tier |
+| `PATREON_TIER_GOLD_SESSIONS` | `'20'` | Max sessions for Gold tier |
+
+**Implementation:**
+
+- `retrobridge/integrations/patreon.py` handles OAuth flow, token exchange, membership lookup, and tier refresh.
+- `retrobridge/auth/routes.py` adds `/auth/profile/patreon/link` (GET → redirect to Patreon), `/auth/profile/patreon/callback` (GET → handle OAuth callback), and `/auth/profile/patreon/unlink` (POST → remove Patreon association).
+- The `get_user_quota()` helper in `retrobridge/jobs/utils.py` is extended to check for Patreon tier overrides via the user's `patreon_tier` field combined with the `PATREON_TIER_*` admin settings.
+
+---
+
+### 7.8 Email Notification System
+
+A no-reply email system sends job completion notifications and account security alerts. Email delivery uses SMTP with STARTTLS, configured via `AdminSetting`.
+
+**SMTP Configuration (Admin Settings):**
+
+| Key | Default | Purpose |
+| --- | ------- | ------- |
+| `EMAIL_SMTP_HOST` | `''` | SMTP server (e.g., smtp.gmail.com) |
+| `EMAIL_SMTP_PORT` | `'587'` | SMTP port |
+| `EMAIL_SMTP_USER` | `''` | SMTP username |
+| `EMAIL_SMTP_PASSWORD` | `''` | SMTP password |
+| `EMAIL_USE_TLS` | `'1'` | Use STARTTLS |
+| `EMAIL_FROM_ADDRESS` | `'noreply@retrobridge.local'` | From address |
+| `EMAIL_FROM_NAME` | `'RetroBridge'` | From display name |
+
+If `EMAIL_SMTP_HOST` is empty, email sending is disabled (no-op).
+
+**Job Notification Emails:**
+
+Sent when a user's job reaches a terminal state (`completed` or `failed`). Controlled by the per-user `email_notify_jobs` flag (default off, opt-in via profile page).
+
+```
+Subject: RetroBridge — Job #42 completed (calc.bin on Centurion CPU-6)
+From:    RetroBridge <noreply@retrobridge.local>
+To:      jsmith@example.com
+
+Your job has completed successfully.
+
+  Program:   calc.bin
+  Device:    Centurion CPU-6
+  Submitted: 2026-07-02 14:21:00 UTC
+  Finished:  2026-07-02 14:22:08 UTC
+  Runtime:   12 seconds
+  Status:    ✅ Completed
+
+View details: https://retrobridge.example.com/42
+
+—
+RetroBridge — Bridging modern web workflows to vintage hardware
+```
+
+For failed jobs, the email includes the error message from `Job.error_message`.
+
+**Account Security Emails:**
+
+Controlled by the per-user `email_notify_security` flag (default on). Sent for:
+
+| Event | Email Content |
+| ----- | ------------- |
+| Password changed | "Your password was changed. If you did not do this, contact an admin immediately." |
+| Email changed | Sent to both old and new addresses: "Your email was changed from X to Y." |
+| New login from new IP | "A new login to your account was detected from IP X.X.X.X (City, Country). If this was not you, change your password." |
+| Account deleted | "Your RetroBridge account has been permanently deleted." |
+
+**Implementation:**
+
+- `retrobridge/integrations/email.py` provides `send_email(to_address, subject, body_text)` which renders a plain-text template, connects to SMTP, and sends.
+- Emails are sent synchronously in a background thread to avoid blocking the HTTP response.
+- Job notifications are triggered by the SSE event loop when `job.status ∈ {completed, failed}` and `user.email_notify_jobs` is true.
+- Security emails are triggered inline by the relevant route handlers (profile update, login, account deletion) via Flask's `after_this_request` or a direct call.
+
+**API Endpoints:**
+
+| Method | Path | Auth | Purpose |
+| ------ | ---- | ---- | ------- |
+| `GET` | `/auth/profile/patreon/link` | user | Redirect to Patreon OAuth |
+| `GET` | `/auth/profile/patreon/callback` | none (OAuth) | Handle OAuth callback, link account |
+| `POST` | `/auth/profile/patreon/unlink` | user | Remove Patreon association |
 
 ---
 
