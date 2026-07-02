@@ -32,6 +32,7 @@ from xmodem import XMODEM1k
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from retrobridge.models import Base, Device, DevicePort, Job  # noqa: E402
+from retrobridge.transport import open_transport, transport_uses_baud  # noqa: E402
 
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -248,10 +249,14 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
     ser = None
 
     try:
-        logger.info(f'Opening serial port: {serial_params["port"]} '
-                     f'({serial_params["baudrate"]} baud, {port.parity}{port.data_bits}{port.stop_bits})')
+        transport = (port.transport or 'serial')
+        if transport_uses_baud(port):
+            logger.info(f'Opening {transport} port: {serial_params["port"]} '
+                         f'({serial_params["baudrate"]} baud, {port.parity}{port.data_bits}{port.stop_bits})')
+        else:
+            logger.info(f'Opening {transport} connection: {serial_params["port"]}')
 
-        ser = Serial(**serial_params)
+        ser = open_transport(port)
         time.sleep(0.5)
 
         with open(output_path, 'a', encoding='utf-8', errors='replace') as out_f:

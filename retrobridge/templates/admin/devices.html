@@ -107,6 +107,7 @@
                     <tr>
                         <th>Label</th>
                         <th>Path</th>
+                        <th>Transport</th>
                         <th>Purpose</th>
                         <th>Baud</th>
                         <th>Protocol</th>
@@ -119,6 +120,7 @@
                     <tr>
                         <td><strong>{{ port.port_label }}</strong></td>
                         <td><code>{{ port.dev_path }}</code></td>
+                        <td><span class="badge bg-secondary">{{ port.transport or 'serial' }}</span></td>
                         <td>
                             <span class="badge bg-{{ 'info' if port.purpose == 'interactive' else 'primary' }}">
                                 {{ port.purpose }}
@@ -181,7 +183,11 @@
                             {{ port_form.dev_path.label(class="form-label") }}
                             {{ port_form.dev_path(class="form-control form-control-sm") }}
                         </div>
-                        <div class="col-md-4 mb-2">
+                        <div class="col-md-3 mb-2">
+                            {{ port_form.transport.label(class="form-label") }}
+                            {{ port_form.transport(class="form-select form-select-sm") }}
+                        </div>
+                        <div class="col-md-3 mb-2">
                             {{ port_form.purpose.label(class="form-label") }}
                             {{ port_form.purpose(class="form-select form-select-sm") }}
                         </div>
@@ -325,11 +331,19 @@
                                    value="{{ port.port_label }}" required>
                         </div>
                         <div class="col-md-6 mb-2">
-                            <label class="form-label">Device Path</label>
+                            <label class="form-label">Device Path / Address</label>
                             <input type="text" name="dev_path" class="form-control form-control-sm"
                                    value="{{ port.dev_path }}" required>
                         </div>
-                        <div class="col-md-4 mb-2">
+                        <div class="col-md-3 mb-2">
+                            <label class="form-label">Transport</label>
+                            <select name="transport" class="form-select form-select-sm">
+                                {% for v, label in [('serial','Serial (RS-232)'),('pty','PTY'),('tcp','TCP'),('telnet','Telnet'),('rfc2217','RFC 2217')] %}
+                                <option value="{{ v }}" {{ 'selected' if (port.transport or 'serial') == v }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3 mb-2">
                             <label class="form-label">Purpose</label>
                             <select name="purpose" class="form-select form-select-sm">
                                 <option value="job_queue" {{ 'selected' if port.purpose == 'job_queue' }}>Job Queue</option>
