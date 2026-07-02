@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
+<div id="dashboard">
 <h2>Dashboard</h2>
 
 <div class="row mb-4">
@@ -50,7 +51,7 @@
                 <td>{{ job.id }}</td>
                 <td>{{ job.original_filename }}</td>
                 <td>{{ job.device.name if job.device else 'N/A' }}</td>
-                <td>
+                <td class="job-status-cell" data-job-id="{{ job.id }}" data-status="{{ job.status }}">
                     {% if job.status == 'queued' %}
                     <span class="badge bg-warning text-dark">Queued</span>
                     {% elif job.status == 'running' %}
@@ -75,4 +76,5 @@
 {% else %}
 <p class="text-muted">No jobs yet. <a href="{{ url_for('jobs.new') }}">Submit your first job</a>.</p>
 {% endif %}
+</div>
 {% endblock %}
