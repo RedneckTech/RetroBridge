@@ -56,10 +56,12 @@ def register_socketio_events(socketio):
         if existing_session:
             bridge = utils.resume_bridge(socketio, sid, existing_session.id)
             if bridge:
+                port = current_app.db_session.get(DevicePort, existing_session.port_id)
                 emit('session_granted', {
                     'session_id': existing_session.id,
                     'device_name': device.display_name or device.name,
-                    'port_label': bridge.get('port_label', ''),
+                    'port_label': port.port_label if port else '',
+                    'baud': port.baud if port else 0,
                     'cols': 80,
                     'rows': 24,
                 })
@@ -113,6 +115,7 @@ def register_socketio_events(socketio):
             'session_id': session.id,
             'device_name': device.display_name or device.name,
             'port_label': available_port.port_label,
+            'baud': available_port.baud,
             'cols': 80,
             'rows': 24,
         })
@@ -134,6 +137,11 @@ def register_socketio_events(socketio):
             bridge = utils._active_bridges.get(sid)
             if bridge and bridge['running']:
                 bridge['last_activity'] = time.time()
+                emit('heartbeat_ack', {
+                    'bytes_sent': bridge.get('bytes_sent', 0),
+                    'bytes_received': bridge.get('bytes_received', 0),
+                })
+                return
         emit('heartbeat_ack')
 
     # Start the timeout monitor
