@@ -181,6 +181,32 @@ def active_sessions():
     })
 
 
+@api_bp.route('/my-sessions')
+@login_required
+def my_sessions():
+    """Return current user's active terminal sessions for dashboard polling."""
+    from flask import current_app
+    now_utc = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+    sessions = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(user_id=current_user.id, status='active')
+        .all()
+    )
+    return jsonify({
+        'sessions': [{
+            'id': s.id,
+            'device_id': s.device_id,
+            'device_name': s.device.display_name or s.device.name if s.device else None,
+            'port_label': s.port.port_label if s.port else None,
+            'elapsed_seconds': int((now_utc - (
+                s.connected_at.replace(tzinfo=__import__('datetime').timezone.utc)
+                if s.connected_at and s.connected_at.tzinfo is None
+                else s.connected_at
+            )).total_seconds()) if s.connected_at else 0,
+        } for s in sessions],
+    })
+
+
 @api_bp.route('/sessions/<int:session_id>/disconnect', methods=['POST'])
 @login_required
 def disconnect_session(session_id):

@@ -1,56 +1,194 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
+{% block head %}
+<style>
+.stat-card { border-left: 4px solid transparent; }
+.stat-card.queued  { border-left-color: var(--bs-warning); }
+.stat-card.running { border-left-color: var(--bs-info); }
+.stat-card.done    { border-left-color: var(--bs-success); }
+.stat-card.failed  { border-left-color: var(--bs-danger); }
+.stat-card.session { border-left-color: var(--bs-primary); }
+.device-mini { border: 1px solid var(--bs-border-color); }
+.active-indicator { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--bs-success); margin-right: 4px; animation: pulse 2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+</style>
+{% endblock %}
 {% block content %}
 <div id="dashboard">
+
 <h2>Dashboard</h2>
 
+{# ── Stats Banner ────────────────────────────────────────────────────────── #}
+<div class="row g-2 mb-4">
+    <div class="col-6 col-md-3 col-lg-2">
+        <div class="stat-card card">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold">{{ stats.total }}</div>
+                <small class="text-muted">Total Jobs</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-lg-2">
+        <div class="stat-card card done">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-success">{{ stats.completed }}</div>
+                <small class="text-muted">Completed</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-lg-2">
+        <div class="stat-card card running">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-info">{{ stats.running }}</div>
+                <small class="text-muted">Running</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-lg-2">
+        <div class="stat-card card queued">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-warning">{{ stats.queued }}</div>
+                <small class="text-muted">Queued</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-lg-2">
+        <div class="stat-card card session">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-primary">{{ stats.active_sessions }}</div>
+                <small class="text-muted">Terminals</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-lg-2">
+        <div class="stat-card card">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold">{{ stats.success_rate }}%</div>
+                <small class="text-muted">Success Rate</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Quota Bars ───────────────────────────────────────────────────────────── #}
+<div class="row g-2 mb-4">
+    <div class="col-md-6">
+        <div class="card bg-light">
+            <div class="card-body py-2 px-3">
+                <small class="text-muted">
+                    Job Quota: {{ stats.queued + stats.running }} / {{ stats.max_jobs }} active
+                </small>
+                <div class="progress" style="height: 6px;">
+                    {% set pct = ((stats.queued + stats.running) / stats.max_jobs * 100) if stats.max_jobs > 0 else 100 %}
+                    <div class="progress-bar bg-{{ 'danger' if pct >= 100 else 'warning' if pct >= 80 else 'success' }}"
+                         style="width: {{ pct }}%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-light">
+            <div class="card-body py-2 px-3">
+                <small class="text-muted">
+                    Terminal Sessions: {{ stats.active_sessions }} / {{ stats.max_sessions }} active
+                </small>
+                <div class="progress" style="height: 6px;">
+                    {% set tpct = (stats.active_sessions / stats.max_sessions * 100) if stats.max_sessions > 0 else 100 %}
+                    <div class="progress-bar bg-{{ 'danger' if tpct >= 100 else 'info' }}"
+                         style="width: {{ tpct }}%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Device Cards ─────────────────────────────────────────────────────────── #}
 <div class="row mb-4">
-    {% for d in devices %}
+    {% for d in device_stats %}
     <div class="col-md-6 col-lg-4 mb-3">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">{{ d.display_name or d.name }}</h5>
-                <p class="card-text">
-                    <span class="badge bg-{{ 'success' if d.is_enabled else 'secondary' }}">
-                        {{ 'Enabled' if d.is_enabled else 'Disabled' }}
+        <div class="card device-mini h-100">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h6 class="card-title mb-0">{{ d.display_name }}</h6>
+                    <span class="badge bg-{{ 'success' if d.interactive_available > 0 else 'secondary' }} small">
+                        {{ d.interactive_available }}/{{ d.interactive_ports }} free
                     </span>
-                    {% set queue_count = d.jobs | selectattr('status', 'equalto', 'queued') | list | length %}
-                    {% set running_count = d.jobs | selectattr('status', 'equalto', 'running') | list | length %}
-                    {% if queue_count > 0 %}
-                    <span class="badge bg-warning text-dark">{{ queue_count }} queued</span>
+                </div>
+                <div class="d-flex gap-2 small mb-2">
+                    {% if d.queue_count > 0 %}
+                    <span class="text-warning">⏳ {{ d.queue_count }} queued</span>
                     {% endif %}
-                    {% if running_count > 0 %}
-                    <span class="badge bg-info">{{ running_count }} running</span>
+                    {% if d.running_count > 0 %}
+                    <span class="text-info">⚡ {{ d.running_count }} running</span>
                     {% endif %}
-                </p>
-                <a href="{{ url_for('jobs.new') }}" class="btn btn-sm btn-outline-primary">Submit Job</a>
-                <a href="{{ url_for('terminal.index') }}" class="btn btn-sm btn-outline-secondary">Open Terminal</a>
+                    {% if d.queue_count == 0 and d.running_count == 0 %}
+                    <span class="text-success">✓ Idle</span>
+                    {% endif %}
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{{ url_for('jobs.new') }}" class="btn btn-sm btn-outline-primary">Submit Job</a>
+                    {% if d.interactive_available > 0 %}
+                    <a href="{{ url_for('terminal.session', device_id=d.id) }}" class="btn btn-sm btn-outline-secondary">Open Terminal</a>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
     {% endfor %}
+    {% if not device_stats %}
+    <div class="col-12">
+        <div class="alert alert-info">No devices configured. Admins can add devices in the <a href="{{ url_for('admin.devices') }}">admin panel</a>.</div>
+    </div>
+    {% endif %}
 </div>
 
-<h3>Your Jobs</h3>
+{# ── Active Session Alert ─────────────────────────────────────────────────── #}
+<div id="active-sessions-container">
+{% if active_session_info %}
+    {% for a in active_session_info %}
+    <div class="alert alert-info d-flex justify-content-between align-items-center py-2 px-3 mb-1">
+        <div>
+            <span class="active-indicator"></span>
+            <strong>Active terminal:</strong> {{ a.session.device.display_name or a.session.device.name }} — {{ a.session.port.port_label if a.session.port else 'N/A' }}
+            <small class="text-muted">for {{ (a.elapsed // 60) }}m {{ (a.elapsed % 60) }}s</small>
+        </div>
+        <a href="{{ url_for('terminal.session', device_id=a.session.device_id) }}" class="btn btn-sm btn-outline-primary">Resume</a>
+    </div>
+    {% endfor %}
+{% endif %}
+</div>
+
+{# ── Jobs Table ───────────────────────────────────────────────────────────── #}
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="mb-0">Your Jobs</h5>
+    <a href="{{ url_for('jobs.new') }}" class="btn btn-primary btn-sm">+ New Job</a>
+</div>
+
 {% if jobs %}
 <div class="table-responsive">
-    <table class="table table-hover">
-        <thead>
+    <table class="table table-hover align-middle">
+        <thead class="table-light">
             <tr>
                 <th>ID</th>
                 <th>Filename</th>
                 <th>Device</th>
                 <th>Status</th>
                 <th>Created</th>
-                <th>Actions</th>
+                <th>Runtime</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
             {% for job in jobs %}
             <tr>
-                <td>{{ job.id }}</td>
-                <td>{{ job.original_filename }}</td>
-                <td>{{ job.device.name if job.device else 'N/A' }}</td>
+                <td class="text-muted small">#{{ job.id }}</td>
+                <td>
+                    <strong>{{ job.original_filename }}</strong>
+                    {% if job.file_size_bytes %}
+                    <small class="text-muted d-block">{{ (job.file_size_bytes / 1024) | round(1) }} KB</small>
+                    {% endif %}
+                </td>
+                <td class="small">{{ job.device.name if job.device else 'N/A' }}</td>
                 <td class="job-status-cell" data-job-id="{{ job.id }}" data-status="{{ job.status }}">
                     {% if job.status == 'queued' %}
                     <span class="badge bg-warning text-dark">Queued</span>
@@ -64,9 +202,19 @@
                     <span class="badge bg-secondary">Canceled</span>
                     {% endif %}
                 </td>
-                <td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '' }}</td>
+                <td class="small text-muted">{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '' }}</td>
+                <td class="small text-muted">
+                    {% set r = job_elapsed.get(job.id) %}
+                    {% if r is not none %}{{ r }}s{% else %}—{% endif %}
+                </td>
                 <td>
                     <a href="{{ url_for('jobs.detail', job_id=job.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+                    {% if job.status == 'queued' %}
+                    <form method="POST" action="{{ url_for('jobs.cancel', job_id=job.id) }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-warning">Cancel</button>
+                    </form>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -74,7 +222,80 @@
     </table>
 </div>
 {% else %}
-<p class="text-muted">No jobs yet. <a href="{{ url_for('jobs.new') }}">Submit your first job</a>.</p>
-{% endif %}
+<div class="text-center py-5 border rounded">
+    <div style="font-size: 3rem;">📡</div>
+    <h5 class="mt-3">No jobs yet</h5>
+    <p class="text-muted">Upload a program to run on a vintage machine.</p>
+    <a href="{{ url_for('jobs.new') }}" class="btn btn-primary">Submit Your First Job</a>
 </div>
+{% endif %}
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function() {
+    // ── Poll active sessions ────────────────────────────────────────────
+    function pollSessions() {
+        fetch('/api/my-sessions').then(function(r) { return r.json(); }).then(function(data) {
+            var container = document.getElementById('active-sessions-container');
+            if (!container) return;
+            var sessions = data.sessions || [];
+            if (!sessions.length) {
+                container.innerHTML = '';
+                return;
+            }
+            var html = '';
+            sessions.forEach(function(s) {
+                var min = Math.floor(s.elapsed_seconds / 60);
+                var sec = s.elapsed_seconds % 60;
+                html += '<div class="alert alert-info d-flex justify-content-between align-items-center py-2 px-3 mb-1">' +
+                    '<div><span class="active-indicator"></span>' +
+                    '<strong>Active terminal:</strong> ' + (s.device_name || 'N/A') +
+                    ' — ' + (s.port_label || 'N/A') +
+                    ' <small class="text-muted">for ' + min + 'm ' + sec + 's</small></div>' +
+                    '<a href="/terminal/' + s.device_id + '" class="btn btn-sm btn-outline-primary">Resume</a>' +
+                    '</div>';
+            });
+            container.innerHTML = html;
+        });
+    }
+    pollSessions();
+    setInterval(pollSessions, 10000);
+
+    // ── Poll job statuses ───────────────────────────────────────────────
+    var cells = document.querySelectorAll('.job-status-cell[data-status="queued"], .job-status-cell[data-status="running"]');
+    if (!cells.length) return;
+    var activeIds = Array.from(cells).map(function(c) { return c.dataset.jobId; });
+
+    function poll() {
+        if (!activeIds.length) return;
+        fetch('/api/jobs?per_page=50').then(function(r) { return r.json(); }).then(function(data) {
+            if (!data.jobs) return;
+            var updated = false;
+            data.jobs.forEach(function(j) {
+                if (activeIds.indexOf(String(j.id)) === -1) return;
+                var cell = document.querySelector('.job-status-cell[data-job-id="' + j.id + '"]');
+                if (!cell) return;
+                var badge = cell.querySelector('.badge');
+                if (!badge) return;
+                var map = {queued:['bg-warning text-dark','Queued'], running:['bg-info','Running'],
+                    completed:['bg-success','Completed'], failed:['bg-danger','Failed'],
+                    canceled:['bg-secondary','Canceled']};
+                var s = map[j.status] || ['bg-secondary', j.status];
+                badge.className = 'badge ' + s[0];
+                badge.textContent = s[1];
+                cell.dataset.status = j.status;
+                if (j.status !== 'queued' && j.status !== 'running') {
+                    activeIds = activeIds.filter(function(id) { return String(id) !== String(j.id); });
+                    updated = true;
+                }
+            });
+            if (updated) location.reload();
+            if (activeIds.length) setTimeout(poll, 5000);
+        });
+    }
+    if (activeIds.length) setTimeout(poll, 5000);
+})();
+</script>
 {% endblock %}

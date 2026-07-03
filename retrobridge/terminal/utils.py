@@ -27,7 +27,9 @@ from retrobridge.transport import open_transport, transport_uses_baud
 logger = logging.getLogger(__name__)
 
 _active_bridges = {}
+_suspended_bridges = {}
 _lock = threading.Lock()
+GRACE_PERIOD = 30
 
 
 def _session_log_path(session_id):
@@ -73,6 +75,9 @@ def allocate_port(port):
         for sid, bridge in _active_bridges.items():
             if bridge['port_id'] == port.id and bridge['running']:
                 return False
+        for sid, bridge in _suspended_bridges.items():
+            if bridge['port_id'] == port.id and bridge['running']:
+                return False
         return True
 
 
@@ -108,16 +113,22 @@ def end_session(db_session, session_id, reason='user_disconnect'):
         db_session.commit()
 
 
-def _serial_reader(socketio, sid, ser, session_id):
-    bridge = _active_bridges.get(sid)
-    while bridge and bridge['running']:
+def _serial_reader(socketio, ser, session_id):
+    while True:
+        with _lock:
+            bridge = _get_bridge_by_session(session_id)
+        if not bridge or not bridge['running']:
+            break
+
+        current_sid = bridge.get('sid')
         try:
             if ser.in_waiting:
                 data = ser.read(ser.in_waiting)
                 if data:
                     decoded = data.decode('utf-8', errors='replace')
-                    socketio.emit('terminal_output', {'data': decoded},
-                                  namespace='/terminal', to=sid)
+                    if current_sid:
+                        socketio.emit('terminal_output', {'data': decoded},
+                                      namespace='/terminal', to=current_sid)
                     bridge['bytes_received'] += len(data)
                     bridge['last_activity'] = time.time()
                     if bridge.get('log_file'):
@@ -127,13 +138,24 @@ def _serial_reader(socketio, sid, ser, session_id):
         except (SerialException, OSError) as e:
             logger.error(f'Serial read error for session {session_id}: {e}')
             bridge['running'] = False
-            socketio.emit('session_closed', {'reason': f'Connection lost: {e}'},
-                          namespace='/terminal', to=sid)
+            if current_sid:
+                socketio.emit('session_closed', {'reason': f'Connection lost: {e}'},
+                              namespace='/terminal', to=current_sid)
             break
         except Exception as e:
             logger.exception(f'Read thread error for session {session_id}: {e}')
             bridge['running'] = False
             break
+
+
+def _get_bridge_by_session(session_id):
+    for bridge in _active_bridges.values():
+        if bridge.get('session_id') == session_id and bridge['running']:
+            return bridge
+    for bridge in _suspended_bridges.values():
+        if bridge.get('session_id') == session_id and bridge['running']:
+            return bridge
+    return None
 
 
 def start_bridge(socketio, sid, session, port):
@@ -185,13 +207,111 @@ def start_bridge(socketio, sid, session, port):
 
         thread = threading.Thread(
             target=_serial_reader,
-            args=(socketio, sid, ser, session.id),
+            args=(socketio, ser, session.id),
             daemon=True,
         )
         bridge['thread'] = thread
         _active_bridges[sid] = bridge
         thread.start()
         return True
+
+
+def suspend_bridge(socketio, sid):
+    with _lock:
+        bridge = _active_bridges.pop(sid, None)
+        if not bridge:
+            return False
+        bridge['running'] = True
+        bridge['suspended_at'] = time.time()
+        bridge['sid'] = None
+        _suspended_bridges[bridge['session_id']] = bridge
+        return True
+
+
+def resume_bridge(socketio, new_sid, session_id):
+    with _lock:
+        bridge = _suspended_bridges.pop(session_id, None)
+        if not bridge:
+            return None
+        if bridge.get('suspended_at') and time.time() - bridge['suspended_at'] > GRACE_PERIOD:
+            bridge['running'] = False
+            _close_bridge_resources(bridge)
+            db_session = _resolve_db_session()
+            end_session(db_session, session_id, reason='user_disconnect')
+            return None
+        bridge['sid'] = new_sid
+        bridge['suspended_at'] = None
+        _active_bridges[new_sid] = bridge
+        try:
+            ser = bridge.get('serial')
+            if ser and ser.is_open and ser.in_waiting:
+                buffered = ser.read(ser.in_waiting)
+                if buffered:
+                    decoded = buffered.decode('utf-8', errors='replace')
+                    bridge['bytes_received'] += len(buffered)
+                    socketio.emit('terminal_output', {'data': decoded},
+                                  namespace='/terminal', to=new_sid)
+        except Exception:
+            pass
+        return bridge
+
+
+def _close_bridge_resources(bridge):
+    ser = bridge.get('serial')
+    if ser and ser.is_open:
+        try:
+            ser.close()
+        except Exception:
+            pass
+    if bridge.get('log_file'):
+        try:
+            _log_line(bridge['log_file'], 'Session ended', 'SYS')
+            bridge['log_file'].close()
+        except Exception:
+            pass
+
+
+def _resolve_db_session():
+    from flask import current_app
+    return current_app.db_session
+
+
+def cleanup_suspended():
+    now = time.time()
+    with _lock:
+        expired = []
+        for sid, bridge in list(_suspended_bridges.items()):
+            if bridge.get('suspended_at') and now - bridge['suspended_at'] > GRACE_PERIOD:
+                expired.append(sid)
+    for sid in expired:
+        bridge = _suspended_bridges.pop(sid, None)
+        if not bridge:
+            continue
+        bridge['running'] = False
+        _close_bridge_resources(bridge)
+        db_session = _resolve_db_session()
+        end_session(db_session, sid, reason='user_disconnect')
+
+
+def _suspended_cleaner(socketio, interval=10):
+    while True:
+        time.sleep(interval)
+        try:
+            app = getattr(socketio, '_flask_app', None)
+            if app:
+                with app.app_context():
+                    cleanup_suspended()
+            else:
+                cleanup_suspended()
+        except Exception:
+            pass
+
+
+def start_suspended_cleaner(socketio):
+    t = threading.Thread(target=_suspended_cleaner, args=(socketio,),
+                         daemon=True, name='suspended-cleaner')
+    t.start()
+    return t
 
 
 def stop_bridge(socketio, sid, reason='user_disconnect', db_session=None):

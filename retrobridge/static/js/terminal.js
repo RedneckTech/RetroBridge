@@ -36,12 +36,13 @@ function initTerminal(deviceId, prefs) {
     socket = io('/terminal');
 
     socket.on('connect', function () {
-        updateStatus(true, 'Connected to server');
+        updateStatus(true, 'Connecting to device...');
+        socket.emit('request_session', { device_id: deviceId });
     });
 
     socket.on('disconnect', function () {
         connected = false;
-        updateStatus(false, 'Disconnected');
+        updateStatus(false, 'Disconnected — click Connect to reconnect');
         document.getElementById('connect-btn').disabled = false;
         document.getElementById('disconnect-btn').disabled = true;
     });
@@ -108,6 +109,10 @@ function initTerminal(deviceId, prefs) {
 
     // Disconnect button
     document.getElementById('disconnect-btn').addEventListener('click', function () {
+        if (socket && connected) {
+            socket.emit('client_disconnect');
+            connected = false;
+        }
         if (socket) {
             socket.disconnect();
         }
