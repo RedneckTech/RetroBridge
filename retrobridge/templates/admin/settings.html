@@ -88,6 +88,54 @@
                         {{ form.maintenance_mode.label(class="form-check-label") }}
                         <div class="form-text">When on, a banner is shown site-wide and non-admin actions are restricted.</div>
                     </div>
+                    <div class="form-check form-switch mb-3">
+                        {{ form.terminal_session_log_enabled(class="form-check-input") }}
+                        {{ form.terminal_session_log_enabled.label(class="form-check-label") }}
+                        <div class="form-text">When on, all terminal keystrokes and output are logged to disk.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header"><strong>Email (SMTP)</strong></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        {{ form.email_smtp_host.label(class="form-label") }}
+                        {{ form.email_smtp_host(class="form-control", placeholder="e.g. smtp.gmail.com") }}
+                        <div class="form-text">Leave empty to disable all email sending.</div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.email_smtp_port.label(class="form-label") }}
+                            {{ form.email_smtp_port(class="form-control", value=form.email_smtp_port.data or 587) }}
+                        </div>
+                        <div class="col-md-6 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                {{ form.email_use_tls(class="form-check-input") }}
+                                {{ form.email_use_tls.label(class="form-check-label") }}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        {{ form.email_smtp_user.label(class="form-label") }}
+                        {{ form.email_smtp_user(class="form-control") }}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.email_smtp_password.label(class="form-label") }}
+                        {{ form.email_smtp_password(class="form-control") }}
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            {{ form.email_from_address.label(class="form-label") }}
+                            {{ form.email_from_address(class="form-control", value=form.email_from_address.data or 'noreply@retrobridge.local') }}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            {{ form.email_from_name.label(class="form-label") }}
+                            {{ form.email_from_name(class="form-control", value=form.email_from_name.data or 'RetroBridge') }}
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

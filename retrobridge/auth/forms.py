@@ -54,6 +54,8 @@ class ProfileForm(FlaskForm):
         ('light', 'Light (Black on White)'),
         ('cyan', 'Cyan (Cyan on Black)'),
     ], default='dark')
+    email_notify_jobs = BooleanField('Email me when my jobs complete')
+    email_notify_security = BooleanField('Email me for account security events')
     new_password = PasswordField('New Password', validators=[
         Optional(),
         Length(min=8, message='Password must be at least 8 characters.'),

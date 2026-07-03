@@ -25,6 +25,8 @@ class User(Base):
     max_terminal_sessions = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime, nullable=True)
+    email_notify_jobs = Column(Boolean, default=False, nullable=False)
+    email_notify_security = Column(Boolean, default=True, nullable=False)
 
     jobs = relationship('Job', back_populates='user')
     terminal_sessions = relationship('TerminalSession', back_populates='user')

@@ -175,6 +175,19 @@
                     </div>
 
                     <hr>
+                    <h5>Notifications</h5>
+                    <div class="form-check mb-2">
+                        {{ form.email_notify_jobs(class="form-check-input") }}
+                        {{ form.email_notify_jobs.label(class="form-check-label") }}
+                        <div class="form-text text-muted small">Receive an email when one of your jobs completes or fails.</div>
+                    </div>
+                    <div class="form-check mb-3">
+                        {{ form.email_notify_security(class="form-check-input") }}
+                        {{ form.email_notify_security.label(class="form-check-label") }}
+                        <div class="form-text text-muted small">Receive emails for password changes, new logins, and account changes.</div>
+                    </div>
+
+                    <hr>
                     <h5>Change Password</h5>
                     <p class="text-muted small">Leave blank to keep your current password.</p>
                     <div class="row">

@@ -572,6 +572,13 @@ SETTING_MAP = {
     'registration_open': ('REGISTRATION_OPEN', lambda v: '1' if v else '0'),
     'maintenance_mode': ('MAINTENANCE_MODE', lambda v: '1' if v else '0'),
     'terminal_session_log_enabled': ('TERMINAL_SESSION_LOG_ENABLED', lambda v: '1' if v else '0'),
+    'email_smtp_host': ('EMAIL_SMTP_HOST', str),
+    'email_smtp_port': ('EMAIL_SMTP_PORT', str),
+    'email_smtp_user': ('EMAIL_SMTP_USER', str),
+    'email_smtp_password': ('EMAIL_SMTP_PASSWORD', str),
+    'email_use_tls': ('EMAIL_USE_TLS', lambda v: '1' if v else '0'),
+    'email_from_address': ('EMAIL_FROM_ADDRESS', str),
+    'email_from_name': ('EMAIL_FROM_NAME', str),
 }
 
 SETTING_REVERSE = {
@@ -585,6 +592,13 @@ SETTING_REVERSE = {
     'REGISTRATION_OPEN': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
     'MAINTENANCE_MODE': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
     'TERMINAL_SESSION_LOG_ENABLED': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
+    'EMAIL_SMTP_HOST': str,
+    'EMAIL_SMTP_PORT': int,
+    'EMAIL_SMTP_USER': str,
+    'EMAIL_SMTP_PASSWORD': str,
+    'EMAIL_USE_TLS': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
+    'EMAIL_FROM_ADDRESS': str,
+    'EMAIL_FROM_NAME': str,
 }
 
 
