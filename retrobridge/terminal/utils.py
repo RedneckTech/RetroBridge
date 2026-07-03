@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _active_bridges = {}
 _suspended_bridges = {}
 _lock = threading.Lock()
-GRACE_PERIOD = 30
+GRACE_PERIOD = 600
 
 
 def _session_log_path(session_id):
@@ -126,6 +126,9 @@ def _serial_reader(socketio, ser, session_id):
                 data = ser.read(ser.in_waiting)
                 if data:
                     decoded = data.decode('utf-8', errors='replace')
+                    bridge['output_buffer'] += decoded
+                    if len(bridge['output_buffer']) > 8192:
+                        bridge['output_buffer'] = bridge['output_buffer'][-8192:]
                     if current_sid:
                         socketio.emit('terminal_output', {'data': decoded},
                                       namespace='/terminal', to=current_sid)
@@ -189,6 +192,7 @@ def start_bridge(socketio, sid, session, port):
             'running': True,
             'bytes_sent': 0,
             'bytes_received': 0,
+            'output_buffer': '',
             'last_activity': time.time(),
             'start_time': time.time(),
             'max_runtime': port.max_runtime_seconds or 3600,
@@ -243,6 +247,9 @@ def resume_bridge(socketio, new_sid, session_id):
         bridge['suspended_at'] = None
         _active_bridges[new_sid] = bridge
         try:
+            if bridge.get('output_buffer'):
+                socketio.emit('terminal_output', {'data': bridge['output_buffer']},
+                              namespace='/terminal', to=new_sid)
             ser = bridge.get('serial')
             if ser and ser.is_open and ser.in_waiting:
                 buffered = ser.read(ser.in_waiting)
