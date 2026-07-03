@@ -8,6 +8,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from retrobridge.auth import auth_bp
 from retrobridge.auth.forms import LoginForm, RegistrationForm, ProfileForm
 from retrobridge.models import Job, LoginAttempt, TerminalSession, User
+from retrobridge.integrations.email import (
+    notify_password_changed, notify_email_changed,
+    notify_new_login, notify_account_deleted,
+)
 
 MAX_FAILED_ATTEMPTS = 5
 THROTTLE_WINDOW_MINUTES = 15
@@ -64,6 +68,20 @@ def login():
             user.last_login = datetime.now(timezone.utc)
             _record_attempt(current_app.db_session, ip_address,
                             form.username.data, success=True)
+
+            if user.email_notify_security:
+                prior_attempts = (
+                    current_app.db_session.query(LoginAttempt)
+                    .filter(
+                        LoginAttempt.username == user.username,
+                        LoginAttempt.success.is_(True),
+                        LoginAttempt.ip_address == ip_address,
+                    )
+                    .count()
+                )
+                if prior_attempts <= 1:
+                    notify_new_login(user, ip_address)
+
             flash('Logged in successfully.', 'success')
             next_page = request.args.get('next')
             return redirect(next_page or url_for('jobs.dashboard'))
@@ -144,15 +162,22 @@ def profile():
         form.terminal_color_scheme.data = prefs.get('terminal_color_scheme', 'dark')
 
     if form.validate_on_submit():
+        old_email = current_user.email
         current_user.email = form.email.data
         current_user.full_name = form.full_name.data
         current_user.bio = form.bio.data
+        current_user.email_notify_jobs = form.email_notify_jobs.data
+        current_user.email_notify_security = form.email_notify_security.data
         current_user.preferences = json.dumps({
             'terminal_font_size': form.terminal_font_size.data,
             'terminal_color_scheme': form.terminal_color_scheme.data,
         })
         if form.new_password.data:
             current_user.password_hash = generate_password_hash(form.new_password.data)
+            if current_user.email_notify_security:
+                notify_password_changed(current_user)
+        if old_email != current_user.email and current_user.email_notify_security:
+            notify_email_changed(current_user, old_email, current_user.email)
         current_app.db_session.commit()
         flash('Profile updated.', 'success')
         return redirect(url_for('auth.profile'))
@@ -199,6 +224,8 @@ def delete_account():
     from flask import current_app
     user = current_app.db_session.get(User, current_user.id)
     if user:
+        if user.email_notify_security:
+            notify_account_deleted(user)
         logout_user()
         current_app.db_session.delete(user)
         current_app.db_session.commit()

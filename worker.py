@@ -31,8 +31,9 @@ from xmodem import XMODEM1k
 # Add the project root to the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from retrobridge.models import Base, Device, DevicePort, Job  # noqa: E402
+from retrobridge.models import Base, Device, DevicePort, Job, User  # noqa: E402
 from retrobridge.transport import open_transport, transport_uses_baud  # noqa: E402
+from retrobridge.integrations.email import notify_job_completed  # noqa: E402
 
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -439,6 +440,14 @@ def worker_loop(device_name: str, poll_interval: int = 5):
 
                 status = 'completed' if success else 'failed'
                 logger.info(f'Job #{job.id} {status}')
+
+                # Send email notification if user has opted in
+                user = session.query(User).filter_by(id=job.user_id).first()
+                if user and user.email_notify_jobs and job.status in ('completed', 'failed'):
+                    try:
+                        notify_job_completed(user, job)
+                    except Exception:
+                        pass
 
             # Check for force-canceled jobs
             canceled = (
