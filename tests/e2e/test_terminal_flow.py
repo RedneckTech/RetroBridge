@@ -27,6 +27,7 @@ def app():
 
     app.db_session.remove()
     terminal_utils._active_bridges.clear()
+    terminal_utils._suspended_bridges.clear()
 
 
 @pytest.fixture
@@ -142,8 +143,11 @@ class TestTerminalSession:
             socket_client.disconnect(namespace='/terminal')
 
             seeded_app.db_session.refresh(session)
-            assert session.status == 'disconnected'
-            assert session.disconnect_reason == 'user_disconnect'
+            assert session.status == 'active'
+
+            # Verify bridge is suspended (not destroyed)
+            assert len(terminal_utils._active_bridges) == 0
+            assert session_id in terminal_utils._suspended_bridges
         finally:
             sim['stop_event'].set()
             sim['thread'].join(timeout=2)

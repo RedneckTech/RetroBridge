@@ -99,6 +99,9 @@ def create_app(config=None):
 
     register_error_handlers(app)
 
+    # Mark any orphaned active sessions as disconnected (server restart)
+    _cleanup_orphaned_sessions(app)
+
     @app.context_processor
     def inject_helpers():
         from datetime import datetime, timezone
@@ -160,3 +163,34 @@ def register_error_handlers(app):
     def internal_error(e):
         from flask import render_template
         return render_template('errors/500.html'), 500
+
+
+def _cleanup_orphaned_sessions(app):
+    """Mark any active TerminalSession records as disconnected on startup.
+
+    Active bridges are held in-memory and are lost when the server
+    stops.  Any session still marked 'active' in the database after a
+    restart is orphaned and must be cleaned up so the port can be
+    reused and users see accurate session history.
+    """
+    from datetime import datetime, timezone
+    from retrobridge.models import TerminalSession
+
+    try:
+        sessions = app.db_session.query(TerminalSession).filter_by(
+            status='active',
+        ).all()
+        if sessions:
+            now = datetime.now(timezone.utc)
+            for s in sessions:
+                s.status = 'disconnected'
+                s.disconnect_reason = 'server_restart'
+                s.disconnected_at = now
+                if s.connected_at:
+                    connected = s.connected_at
+                    if connected.tzinfo is None:
+                        connected = connected.replace(tzinfo=timezone.utc)
+                    s.duration_seconds = int((now - connected).total_seconds())
+            app.db_session.commit()
+    except Exception:
+        pass

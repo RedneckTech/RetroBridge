@@ -20,6 +20,12 @@ def register_socketio_events(socketio):
     def handle_disconnect(reason=None):
         sid = _get_sid()
         if sid:
+            utils.suspend_bridge(socketio, sid)
+
+    @socketio.on('client_disconnect', namespace='/terminal')
+    def handle_client_disconnect():
+        sid = _get_sid()
+        if sid:
             utils.stop_bridge(socketio, sid, reason='user_disconnect')
 
     @socketio.on('request_session', namespace='/terminal')
@@ -36,6 +42,29 @@ def register_socketio_events(socketio):
             emit('session_denied', {'reason': 'Device not available'})
             return
 
+        # Check if this sid already has an active bridge
+        if utils._active_bridges.get(sid, {}).get('running'):
+            emit('session_denied', {'reason': 'Session already active on this connection'})
+            return
+
+        # Check for a suspended session on this device for this user
+        existing_session = (
+            current_app.db_session.query(TerminalSession)
+            .filter_by(user_id=current_user.id, device_id=device_id, status='active')
+            .first()
+        )
+        if existing_session:
+            bridge = utils.resume_bridge(socketio, sid, existing_session.id)
+            if bridge:
+                emit('session_granted', {
+                    'session_id': existing_session.id,
+                    'device_name': device.display_name or device.name,
+                    'port_label': bridge.get('port_label', ''),
+                    'cols': 80,
+                    'rows': 24,
+                })
+                return
+
         # Check user session quota
         active_count = (
             current_app.db_session.query(TerminalSession)
@@ -44,11 +73,6 @@ def register_socketio_events(socketio):
         )
         if active_count >= current_user.max_terminal_sessions:
             emit('session_denied', {'reason': 'Maximum terminal sessions reached'})
-            return
-
-        # Check if this sid already has an active bridge
-        if utils._active_bridges.get(sid, {}).get('running'):
-            emit('session_denied', {'reason': 'Session already active on this connection'})
             return
 
         # Find available interactive port
@@ -114,6 +138,7 @@ def register_socketio_events(socketio):
 
     # Start the timeout monitor
     utils.start_timeout_monitor(socketio)
+    utils.start_suspended_cleaner(socketio)
 
 
 import time  # noqa: E402

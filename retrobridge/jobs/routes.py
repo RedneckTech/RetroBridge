@@ -9,12 +9,13 @@ from retrobridge.jobs.utils import (
     cancel_job, check_rate_limit, create_job, get_device_choices,
     get_device_stats, get_job_or_403, get_user_quota, load_output_content,
 )
-from retrobridge.models import Job
+from retrobridge.models import Job, TerminalSession
 
 
 @jobs_bp.route('/dashboard')
 @login_required
 def dashboard():
+    from datetime import datetime, timezone
     from flask import current_app
     jobs = (
         current_app.db_session.query(Job)
@@ -23,8 +24,57 @@ def dashboard():
         .limit(50)
         .all()
     )
-    _, devices = get_device_choices(current_app.db_session)
-    return render_template('jobs/dashboard.html', jobs=jobs, devices=devices)
+    device_stats = get_device_stats(current_app.db_session)
+
+    active_sessions = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(user_id=current_user.id, status='active')
+        .all()
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    active_session_info = []
+    for s in active_sessions:
+        elapsed = 0
+        if s.connected_at:
+            conn = s.connected_at
+            if conn.tzinfo is None:
+                conn = conn.replace(tzinfo=timezone.utc)
+            elapsed = int((now_utc - conn).total_seconds())
+        active_session_info.append({'session': s, 'elapsed': elapsed})
+
+    total = len(jobs)
+    completed = sum(1 for j in jobs if j.status == 'completed')
+    failed = sum(1 for j in jobs if j.status == 'failed')
+    queued = sum(1 for j in jobs if j.status == 'queued')
+    running = sum(1 for j in jobs if j.status == 'running')
+
+    stats = {
+        'total': total,
+        'completed': completed,
+        'failed': failed,
+        'queued': queued,
+        'running': running,
+        'success_rate': round(completed / max(total, 1) * 100),
+        'active_sessions': len(active_sessions),
+        'max_jobs': current_user.max_queued_jobs,
+        'max_sessions': current_user.max_terminal_sessions,
+    }
+
+    job_elapsed = {}
+    for j in jobs:
+        if j.status == 'running' and j.started_at:
+            started = j.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            job_elapsed[j.id] = int((now_utc - started).total_seconds())
+        else:
+            job_elapsed[j.id] = j.runtime_seconds
+
+    return render_template('jobs/dashboard.html',
+                           jobs=jobs, device_stats=device_stats,
+                           active_session_info=active_session_info,
+                           stats=stats, job_elapsed=job_elapsed)
 
 
 @jobs_bp.route('/new', methods=['GET', 'POST'])
