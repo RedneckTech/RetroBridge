@@ -36,7 +36,17 @@ def index():
         .first()
     )
 
-    return render_template('terminal/index.html', devices=device_list, active_session=active_session)
+    recent_sessions = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(user_id=current_user.id)
+        .order_by(TerminalSession.connected_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    return render_template('terminal/index.html', devices=device_list,
+                           active_session=active_session,
+                           recent_sessions=recent_sessions)
 
 
 @terminal_bp.route('/<int:device_id>')

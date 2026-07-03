@@ -36,4 +36,48 @@
     </div>
     {% endfor %}
 </div>
+
+{% if recent_sessions %}
+<h4 class="mt-4">Recent Sessions</h4>
+<table class="table table-sm table-hover">
+    <thead>
+        <tr>
+            <th>Device</th>
+            <th>Port</th>
+            <th>Started</th>
+            <th>Duration</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in recent_sessions %}
+        <tr>
+            <td>{{ s.device.display_name or s.device.name }}</td>
+            <td>{{ s.port.port_label }}</td>
+            <td>{{ s.connected_at.strftime('%Y-%m-%d %H:%M') if s.connected_at else '&mdash;'|safe }}</td>
+            <td>
+                {% if s.duration_seconds %}
+                {{ '%d:%02d:%02d'|format(s.duration_seconds // 3600, (s.duration_seconds % 3600) // 60, s.duration_seconds % 60) }}
+                {% else %}
+                &mdash;
+                {% endif %}
+            </td>
+            <td>
+                {% if s.status == 'active' %}
+                <span class="badge bg-success">Active</span>
+                {% elif s.status == 'disconnected' %}
+                <span class="badge bg-secondary">Ended</span>
+                {% else %}
+                <span class="badge bg-warning">{{ s.status }}</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="{{ url_for('terminal.session', device_id=s.device_id) }}" class="btn btn-outline-primary btn-sm">Reconnect</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
 {% endblock %}
