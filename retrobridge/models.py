@@ -27,6 +27,11 @@ class User(Base):
     last_login = Column(DateTime, nullable=True)
     email_notify_jobs = Column(Boolean, default=False, nullable=False)
     email_notify_security = Column(Boolean, default=True, nullable=False)
+    patreon_id = Column(String(64), nullable=True, unique=True)
+    patreon_tier = Column(String(32), nullable=True)
+    patreon_access_token = Column(Text, nullable=True)
+    patreon_refresh_token = Column(Text, nullable=True)
+    patreon_expires_at = Column(DateTime, nullable=True)
 
     jobs = relationship('Job', back_populates='user')
     terminal_sessions = relationship('TerminalSession', back_populates='user')

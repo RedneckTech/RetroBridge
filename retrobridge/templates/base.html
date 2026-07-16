@@ -51,7 +51,7 @@
                              class="rounded-circle me-2" style="width:28px;height:28px;object-fit:cover;margin-top:6px">
                     </li>
                     <li class="nav-item">
-                        <span class="navbar-text me-3">{{ current_user.username }}</span>
+                        <span class="navbar-text me-3">{{ current_user.username }}{% if current_user.patreon_tier %} <span class="badge bg-danger" style="font-size:0.6rem;vertical-align:middle">{{ current_user.patreon_tier }}</span>{% endif %}</span>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('auth.profile') }}">Profile</a>
