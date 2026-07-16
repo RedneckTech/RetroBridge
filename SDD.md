@@ -63,7 +63,9 @@
    - 8.3 [nginx Configuration](#83-nginx-configuration)
    - 8.4 [udev Rules](#84-udev-rules)
    - 8.5 [logrotate Configuration](#85-logrotate-configuration)
-9. [Security Design](#9-security-design)
+   - 8.6 [install.sh — Production Installation Script](#86-installsh--production-installation-script)
+   - 8.7 [Emulator Setup Script](#87-emulator-setup-script)
+ 9. [Security Design](#9-security-design)
    - 9.1 [Authentication Security](#91-authentication-security)
    - 9.2 [Authorization](#92-authorization)
    - 9.3 [Input Validation and Injection Prevention](#93-input-validation-and-injection-prevention)
@@ -1486,6 +1488,420 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
     copytruncate
 }
 ```
+
+### 8.6 install.sh — Production Installation Script
+
+A single-command installer that provisions a bare Linux server (Debian/Ubuntu, RHEL/Fedora, or Arch) for production RetroBridge deployment. The script must be run as root or via `sudo`.
+
+**Location:** `deploy/install.sh`
+
+#### 8.6.1 Supported Platforms
+
+| Family       | Distros                                    | Package Manager | Notes                              |
+| ------------ | ------------------------------------------ | --------------- | ---------------------------------- |
+| Debian/Ubuntu | Debian 11+, Ubuntu 22.04+                 | `apt`           | Primary target                     |
+| RHEL/Fedora  | RHEL 9+, Fedora 38+, Rocky 9, AlmaLinux 9 | `dnf`/`yum`     | `epel-release` may be needed        |
+| Arch Linux   | Arch (rolling), EndeavourOS                | `pacman`        | Community-maintained               |
+
+#### 8.6.2 Prerequisites
+
+The script checks for the following before proceeding:
+
+| Requirement       | Check                                  | Action if missing                                      |
+| ----------------- | -------------------------------------- | ------------------------------------------------------ |
+| Root / sudo       | `id -u` == 0                           | Abort with instructions                                |
+| Python 3.11+      | `python3 --version` parsed for >= 3.11 | Abort with install instructions per distro family       |
+| `git`             | `command -v git`                       | Install via package manager                            |
+| `sqlite3`         | `command -v sqlite3`                   | Install via package manager (diagnostic convenience)    |
+| `gcc` / `make`    | For CPU7Plus build (emulator setup)    | Install via package manager (only if `--emulators`)     |
+
+#### 8.6.3 Command-Line Interface
+
+```
+deploy/install.sh [OPTIONS]
+
+Options:
+  --prefix DIR        Install directory (default: /srv/retrobridge)
+  --src DIR           Copy application from local path instead of git clone
+  --user USER         System user name (default: retrobridge)
+  --port PORT         Gunicorn bind port (default: 8000)
+  --nginx             Install and configure nginx reverse proxy
+  --udev              Install udev rules for serial adapters
+  --logrotate         Install logrotate configuration
+  --backup-cron       Install cron job for database backups
+  --emulators         Run emulator setup (calls deploy/emulators/setup.sh)
+  --skip-db           Skip database initialization (for re-installs)
+  --yes               Non-interactive mode — accept all defaults
+  -h, --help          Show usage
+```
+
+#### 8.6.4 Installation Flow
+
+The script executes the following stages sequentially. Each stage is idempotent — re-running the script after a partial failure picks up where it left off.
+
+**Stage 1: System user and groups**
+
+```
+1. Detect distro family (Debian/RHEL/Arch) via /etc/os-release
+2. Create system group 'www-data' if not present (RHEL/Arch: may already exist or use 'nginx')
+3. Create system group 'dialout' if not present
+4. Create system user '--user' (default: retrobridge):
+     --system --no-create-home --shell /usr/sbin/nologin
+     --home-dir <prefix> --group www-data --additional-group dialout
+```
+
+**Stage 2: Application deployment**
+
+```
+IF --src is provided:
+    cp -a <src> <prefix>
+ELSE:
+    git clone <repo-url> <prefix>
+
+chown -R <user>:www-data <prefix>
+```
+
+**Stage 3: Python environment**
+
+```
+python3 -m venv <prefix>/venv
+<prefix>/venv/bin/pip install --upgrade pip
+<prefix>/venv/bin/pip install -r <prefix>/requirements.txt
+```
+
+**Stage 4: Configuration**
+
+```
+IF <prefix>/.env does not exist:
+    cp <prefix>/.env.example <prefix>/.env
+    Generate SECRET_KEY:
+        KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    sed -i "s/change-me-to-a-random-string/$KEY/" <prefix>/.env
+    sed -i "s/^# FLASK_ENV=production/FLASK_ENV=production/" <prefix>/.env
+    sed -i "s|^# DATABASE_URL=.*|DATABASE_URL=sqlite:///<prefix>/instance/retrobridge.db|" <prefix>/.env
+```
+
+**Stage 5: Directory structure**
+
+```
+FOR dir in instance uploads outputs session_logs logs backups:
+    mkdir -p <prefix>/<dir>
+    chown <user>:www-data <prefix>/<dir>
+    chmod 0775 <prefix>/<dir>
+
+chmod 0770 <prefix>/instance
+```
+
+**Stage 6: Database initialization** (skipped if `--skip-db`)
+
+```
+cd <prefix>
+sudo -u <user> <prefix>/venv/bin/flask --app wsgi:app init-db
+sudo -u <user> <prefix>/venv/bin/flask --app wsgi:app seed
+
+IF interactive AND NOT --yes:
+    echo "Default admin credentials: admin / admin"
+    echo "Change the admin password after first login."
+```
+
+**Stage 7: systemd service installation**
+
+Write unit files to `/etc/systemd/system/`:
+
+`retrobridge-web.service`:
+```ini
+[Unit]
+Description=RetroBridge Web Application
+After=network.target
+
+[Service]
+User=<user>
+Group=www-data
+WorkingDirectory=<prefix>
+Environment="FLASK_ENV=production"
+ExecStart=<prefix>/venv/bin/gunicorn -k eventlet -w 1 -b 127.0.0.1:<port> wsgi:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`retrobridge-worker@.service` (template unit):
+```ini
+[Unit]
+Description=RetroBridge Serial Worker for %i
+After=network.target retrobridge-web.service
+
+[Service]
+User=<user>
+Group=dialout
+WorkingDirectory=<prefix>
+ExecStart=<prefix>/venv/bin/python3 <prefix>/worker.py --device %i
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+After writing units:
+```
+systemctl daemon-reload
+systemctl enable retrobridge-web.service
+systemctl start retrobridge-web.service
+
+IF interactive AND NOT --yes:
+    Prompt: "Enable worker services? Enter device names (e.g., 'centurion pdp11') or press Enter to skip."
+    FOR each device name:
+        systemctl enable retrobridge-worker@<device>.service
+        systemctl start retrobridge-worker@<device>.service
+```
+
+**Stage 8: Optional components** (only if corresponding flags are set)
+
+| Flag          | Action                                                                   |
+| ------------- | ------------------------------------------------------------------------ |
+| `--nginx`     | Write nginx site config to `/etc/nginx/sites-available/retrobridge`, symlink to `sites-enabled`, `nginx -t`, `systemctl reload nginx` |
+| `--udev`      | Write udev rules to `/etc/udev/rules.d/99-retrobridge-serial.rules`, `udevadm control --reload-rules && udevadm trigger` |
+| `--logrotate` | Write config to `/etc/logrotate.d/retrobridge`                           |
+| `--backup-cron` | Install cron entry: `0 3 * * * <user> <prefix>/venv/bin/python <prefix>/deploy/backup.py` |
+
+**Stage 9: Post-install summary**
+
+Print:
+- Installation directory and version
+- URL: `https://<hostname>` (if nginx installed) or `http://127.0.0.1:<port>`
+- Default admin credentials with change reminder
+- `systemctl` commands for managing services
+- Next steps: configure serial ports in admin panel, connect vintage hardware or emulators
+
+#### 8.6.5 Post-Install Directory Layout
+
+```
+<prefix>/                        # e.g., /srv/retrobridge/
+├── retrobridge/                 # Application package
+├── deploy/
+│   ├── install.sh               # This script
+│   ├── backup.py                # Cron backup script
+│   └── emulators/
+│       ├── setup.sh             # Emulator setup script
+│       ├── start.sh             # Emulator launcher
+│       ├── simh-pdp11.ini       # SIMH config
+│       └── cpu7plus.ini         # CPU7Plus config
+├── worker.py                    # Worker daemon
+├── cli.py                       # Flask CLI commands
+├── config.py                    # Configuration classes
+├── wsgi.py                      # Gunicorn entry point
+├── requirements.txt
+├── .env                         # Environment secrets
+├── venv/                        # Python virtual environment
+├── instance/                    # SQLite database
+├── uploads/                     # User program uploads
+├── outputs/                     # Job session capture logs
+├── session_logs/                # Terminal session logs
+├── logs/                        # Application and worker logs
+└── backups/                     # Database backups
+```
+
+---
+
+### 8.7 Emulator Setup Script
+
+A companion script that installs, configures, and optionally daemonizes the SIMH PDP-11 and CPU7Plus Centurion emulators for use as first-class RetroBridge devices. Can be run standalone or invoked from `install.sh --emulators`.
+
+**Location:** `deploy/emulators/setup.sh`
+
+#### 8.7.1 Supported Emulators
+
+| Emulator      | Source                                                 | License              | Disk Images             |
+| ------------- | ------------------------------------------------------ | -------------------- | ----------------------- |
+| Open SIMH     | `apt install simh` / `dnf install simh` / build from source | BSD-like (MIT)       | User-supplied (see §8.7.3) |
+| CPU7Plus      | [github.com/tergav17/CPU7Plus](https://github.com/tergav17/CPU7Plus) — build from source | MIT                  | User-supplied (proprietary, not redistributable) |
+
+#### 8.7.2 Command-Line Interface
+
+```
+deploy/emulators/setup.sh [OPTIONS]
+
+Options:
+  --pdp11               Set up SIMH PDP-11 emulator
+  --centurion           Set up CPU7Plus Centurion emulator
+                        (default: both if neither flag is given)
+  --disk-image PATH     Path to disk image for the selected emulator
+  --emulator-dir DIR    Working directory for emulator files
+                        (default: <prefix>/emulators, or ./emulators)
+  --install-only        Install emulator binaries, skip configuration
+  --configure-only      Configure .ini files and systemd, skip binary install
+  --systemd             Install systemd service units for emulators
+  --prefix DIR          RetroBridge install directory (default: /srv/retrobridge)
+  --yes                 Non-interactive mode
+  -h, --help            Show usage
+```
+
+#### 8.7.3 Disk Image Licensing
+
+PDP-11 and Centurion operating systems are proprietary software with specific licensing terms. The setup script does **not** download or distribute disk images.
+
+| OS                    | Availability                                                          | Source                                                                 |
+| --------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| RT-11 V5.3            | Free for personal/non-commercial use (Mentec hobby license)           | [simh.trailing-edge.com](http://simh.trailing-edge.com/kits/rtv53swre.tar.Z) |
+| RSTS/E V9.6           | Free for personal/non-commercial use (Mentec hobby license)           | [simh.trailing-edge.com](https://simh.trailing-edge.com/software.html) |
+| RSX-11M V4.3          | Free for personal/non-commercial use (Mentec hobby license)           | [pdp-11.org.ru](https://pdp-11.org.ru/en/files.pl)                    |
+| 2.11 BSD Unix         | BSD-like (Caldera license)                                            | [tuhs.org](https://www.tuhs.org/Archive/Distributions/DEC/)           |
+| Centurion Multi-User OS | **Not freely redistributable** — user must supply from original hardware or community | [Nakazoto/CenturionComputer](https://github.com/Nakazoto/CenturionComputer/wiki) |
+
+The script validates that disk images exist and have a minimum size, but does not verify content or licensing compliance.
+
+#### 8.7.4 Installation Flow
+
+**Stage 1: Binary installation** (skipped if `--configure-only`)
+
+```
+FOR each selected emulator:
+
+SIMH (PDP-11):
+    IF command -v pdp11 OR command -v simh-pdp11 exists:
+        PRINT "SIMH already installed: <path>"
+    ELIF apt available:
+        apt install -y simh
+    ELIF dnf available:
+        dnf install -y simh
+    ELIF pacman available:
+        pacman -S --noconfirm simh
+    ELSE:
+        PRINT "SIMH not available via package manager."
+        PRINT "Build from source: https://github.com/open-simh/simh"
+        PRINT "Or install manually and re-run with --configure-only"
+        EXIT 1
+
+CPU7Plus (Centurion):
+    IF command -v cpu7plus exists:
+        PRINT "CPU7Plus already installed: <path>"
+    ELSE:
+        PRINT "CPU7Plus must be built from source."
+        PRINT "  git clone https://github.com/tergav17/CPU7Plus"
+        PRINT "  cd CPU7Plus && mkdir build && cd build"
+        PRINT "  cmake .. && make"
+        PRINT "  sudo cp cpu7plus /usr/local/bin/"
+        PRINT ""
+        IF NOT --yes:
+            Prompt: "Build CPU7Plus now? [y/N]"
+            IF yes:
+                Install build dependencies (cmake, gcc, etc.)
+                Clone and build, install to /usr/local/bin/
+```
+
+**Stage 2: Working directory setup**
+
+```
+mkdir -p <emulator-dir>
+
+Copy configs from deploy/emulators/:
+    simh-pdp11.ini  →  <emulator-dir>/simh-pdp11.ini
+    cpu7plus.ini     →  <emulator-dir>/cpu7plus.ini
+    start.sh         →  <emulator-dir>/start.sh
+    chmod +x <emulator-dir>/start.sh
+```
+
+**Stage 3: Disk image configuration**
+
+```
+FOR each selected emulator, if --disk-image was provided:
+
+SIMH PDP-11:
+    Validate: file exists, size >= 100KB
+    Update ATTACH RL0 line in simh-pdp11.ini:
+        sed -i "s|ATTACH RL0 pdp11-rsts.dsk|ATTACH RL0 <absolute-path-to-image>|" \
+            <emulator-dir>/simh-pdp11.ini
+
+CPU7Plus Centurion:
+    Validate: file exists, size >= 10KB
+    Update DISK 0 FILE line in cpu7plus.ini:
+        sed -i "s|DISK 0 FILE=centurion-os.dsk|DISK 0 FILE=<absolute-path-to-image>|" \
+            <emulator-dir>/cpu7plus.ini
+
+IF NOT --disk-image:
+    PRINT "No disk image provided. Edit the .ini file manually before starting."
+    PRINT "  SIMH:     ATTACH RL0 /path/to/your/disk.img"
+    PRINT "  CPU7Plus: DISK 0 FILE=/path/to/your/disk.img"
+```
+
+**Stage 4: Network and port summary**
+
+Print the TCP port mapping for the admin panel:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  RetroBridge Admin Panel — DevicePort Configuration                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  PDP-11/44 (SIMH):                                                     │
+│    transport=tcp  dev_path=127.0.0.1:10023  purpose=job_queue           │
+│    transport=tcp  dev_path=127.0.0.1:10024  purpose=interactive        │
+│    transport=tcp  dev_path=127.0.0.1:10025  purpose=interactive        │
+│    transport=tcp  dev_path=127.0.0.1:10026  purpose=interactive        │
+│                                                                         │
+│  Centurion CPU-6 (CPU7Plus):                                           │
+│    transport=tcp  dev_path=127.0.0.1:10901  purpose=job_queue           │
+│    transport=tcp  dev_path=127.0.0.1:10902  purpose=interactive        │
+│    transport=tcp  dev_path=127.0.0.1:10903  purpose=interactive        │
+│                                                                         │
+│  Copy these into the RetroBridge admin panel under Admin → Devices.    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Stage 5: systemd services** (only if `--systemd`)
+
+Write `retrobridge-emulator@.service` template unit to `/etc/systemd/system/`:
+
+```ini
+[Unit]
+Description=RetroBridge Emulator — %i
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=<emulator-dir>
+ExecStart=/bin/sh -c 'case %i in pdp11) exec pdp11 simh-pdp11.ini ;; centurion) exec cpu7plus cpu7plus.ini ;; esac'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+After writing:
+```
+systemctl daemon-reload
+
+FOR each selected emulator:
+    systemctl enable retrobridge-emulator@<name>.service
+    systemctl start retrobridge-emulator@<name>.service
+    Verify: ss -tlnp | grep -E ':(10023|10901)'
+```
+
+**Stage 6: Connectivity test**
+
+```
+FOR each TCP port in the selected emulator's config:
+    timeout 2 bash -c "echo >/dev/tcp/127.0.0.1/<port>" 2>/dev/null
+    IF success:
+        PRINT "  ✓ Port <port> — listening"
+    ELSE:
+        PRINT "  ✗ Port <port> — not responding (emulator may not be running yet)"
+```
+
+**Stage 7: Post-setup summary**
+
+Print:
+- Which emulators were installed/configured
+- Whether systemd services are active
+- The DevicePort configuration snippets (from Stage 4)
+- Commands to manage emulators:
+  - Interactive: `cd <emulator-dir> && ./start.sh --pdp11`
+  - systemd: `systemctl start retrobridge-emulator@pdp11`
+  - Logs: `journalctl -u retrobridge-emulator@pdp11 -f`
 
 ---
 
