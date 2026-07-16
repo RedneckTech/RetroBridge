@@ -17,6 +17,15 @@ SETTING_DEFAULTS = {
     'REGISTRATION_OPEN': ('1', bool),
     'MAINTENANCE_MODE': ('0', bool),
     'TERMINAL_SESSION_LOG_ENABLED': ('0', bool),
+    'PATREON_CLIENT_ID': ('', str),
+    'PATREON_CLIENT_SECRET': ('', str),
+    'PATREON_CAMPAIGN_ID': ('', str),
+    'PATREON_TIER_BRONZE_JOBS': ('10', int),
+    'PATREON_TIER_BRONZE_SESSIONS': ('3', int),
+    'PATREON_TIER_SILVER_JOBS': ('50', int),
+    'PATREON_TIER_SILVER_SESSIONS': ('10', int),
+    'PATREON_TIER_GOLD_JOBS': ('999', int),
+    'PATREON_TIER_GOLD_SESSIONS': ('20', int),
 }
 
 

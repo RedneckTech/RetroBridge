@@ -139,10 +139,18 @@ def get_user_quota(db_session, user):
         .filter(Job.status.in_(['queued', 'running']))
         .count()
     )
+
+    max_jobs = user.max_queued_jobs
+    if user.patreon_tier:
+        from retrobridge.integrations.patreon import get_tier_limits
+        tier_jobs, _ = get_tier_limits(user.patreon_tier)
+        if tier_jobs and tier_jobs > max_jobs:
+            max_jobs = tier_jobs
+
     return (
         queued_running,
-        user.max_queued_jobs,
-        queued_running >= user.max_queued_jobs,
+        max_jobs,
+        queued_running >= max_jobs,
     )
 
 

@@ -148,6 +148,7 @@ def logout():
 @login_required
 def profile():
     from flask import current_app
+    from retrobridge.integrations.patreon import is_enabled as is_patreon_enabled
 
     form = ProfileForm(obj=current_user)
 
@@ -215,7 +216,8 @@ def profile():
 
     return render_template('auth/profile.html', form=form, stats=stats,
                            recent_jobs=recent_jobs,
-                           recent_sessions=recent_sessions)
+                           recent_sessions=recent_sessions,
+                           patreon_enabled=is_patreon_enabled())
 
 
 @auth_bp.route('/delete-account', methods=['POST'])
@@ -231,3 +233,88 @@ def delete_account():
         current_app.db_session.commit()
         flash('Your account has been deleted.', 'info')
     return redirect(url_for('auth.login'))
+
+
+@auth_bp.route('/profile/patreon/link')
+@login_required
+def patreon_link():
+    from retrobridge.integrations.patreon import is_enabled, get_authorize_url
+    if not is_enabled():
+        flash('Patreon integration is not configured.', 'warning')
+        return redirect(url_for('auth.profile'))
+    redirect_uri = url_for('auth.patreon_callback', _external=True)
+    state = str(current_user.id)
+    return redirect(get_authorize_url(redirect_uri, state=state))
+
+
+@auth_bp.route('/profile/patreon/callback')
+def patreon_callback():
+    from flask import current_app
+    from retrobridge.integrations.patreon import (
+        exchange_code, fetch_patreon_identity, fetch_membership_tier,
+    )
+
+    code = request.args.get('code')
+    state = request.args.get('state')
+    error = request.args.get('error')
+
+    if error:
+        flash(f'Patreon authorization failed: {error}', 'danger')
+        return redirect(url_for('auth.profile'))
+
+    if not code or not state:
+        flash('Invalid Patreon callback parameters.', 'danger')
+        return redirect(url_for('auth.profile'))
+
+    try:
+        user_id = int(state)
+    except (ValueError, TypeError):
+        flash('Invalid state parameter.', 'danger')
+        return redirect(url_for('auth.profile'))
+
+    user = current_app.db_session.get(User, user_id)
+    if not user or user.id != current_user.id:
+        flash('Authentication error.', 'danger')
+        return redirect(url_for('auth.profile'))
+
+    redirect_uri = url_for('auth.patreon_callback', _external=True)
+    tokens = exchange_code(code, redirect_uri)
+    if not tokens:
+        flash('Failed to exchange Patreon authorization code.', 'danger')
+        return redirect(url_for('auth.profile'))
+
+    identity = fetch_patreon_identity(tokens['access_token'])
+    if not identity:
+        flash('Failed to fetch Patreon profile.', 'danger')
+        return redirect(url_for('auth.profile'))
+
+    tier = fetch_membership_tier(tokens['access_token'])
+
+    user.patreon_id = identity['id']
+    user.patreon_tier = tier
+    user.patreon_access_token = tokens['access_token']
+    user.patreon_refresh_token = tokens['refresh_token']
+    user.patreon_expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=tokens['expires_in'],
+    )
+    current_app.db_session.commit()
+
+    if tier:
+        flash(f'Patreon account linked — tier: {tier}', 'success')
+    else:
+        flash('Patreon account linked (no active membership found).', 'info')
+    return redirect(url_for('auth.profile'))
+
+
+@auth_bp.route('/profile/patreon/unlink', methods=['POST'])
+@login_required
+def patreon_unlink():
+    from flask import current_app
+    from retrobridge.integrations.patreon import unlink_user
+
+    user = current_app.db_session.get(User, current_user.id)
+    if user:
+        unlink_user(user)
+        current_app.db_session.commit()
+        flash('Patreon account unlinked.', 'info')
+    return redirect(url_for('auth.profile'))

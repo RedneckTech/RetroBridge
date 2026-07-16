@@ -163,6 +163,15 @@ def register_cli_commands(app):
             'REGISTRATION_OPEN': ('1', 'Whether new user registration is allowed'),
             'MAINTENANCE_MODE': ('0', 'Site-wide maintenance mode toggle'),
             'TERMINAL_SESSION_LOG_ENABLED': ('0', 'Log keystrokes and output for terminal sessions'),
+            'PATREON_CLIENT_ID': ('', 'Patreon OAuth client ID'),
+            'PATREON_CLIENT_SECRET': ('', 'Patreon OAuth client secret'),
+            'PATREON_CAMPAIGN_ID': ('', 'Patreon campaign ID for membership lookup'),
+            'PATREON_TIER_BRONZE_JOBS': ('10', 'Max queued jobs for Bronze tier'),
+            'PATREON_TIER_BRONZE_SESSIONS': ('3', 'Max terminal sessions for Bronze tier'),
+            'PATREON_TIER_SILVER_JOBS': ('50', 'Max queued jobs for Silver tier'),
+            'PATREON_TIER_SILVER_SESSIONS': ('10', 'Max terminal sessions for Silver tier'),
+            'PATREON_TIER_GOLD_JOBS': ('999', 'Max queued jobs for Gold tier'),
+            'PATREON_TIER_GOLD_SESSIONS': ('20', 'Max terminal sessions for Gold tier'),
         }
         for key, (value, desc) in default_settings.items():
             if not s.get(AdminSetting, key):
