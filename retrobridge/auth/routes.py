@@ -66,6 +66,14 @@ def login():
         if user and check_password_hash(user.password_hash, form.password.data):
             login_user(user, remember=form.remember_me.data)
             user.last_login = datetime.now(timezone.utc)
+
+            from retrobridge.integrations.patreon import is_enabled, sync_user_tier
+            if is_enabled():
+                try:
+                    sync_user_tier(user, current_app.db_session)
+                except Exception:
+                    pass
+
             _record_attempt(current_app.db_session, ip_address,
                             form.username.data, success=True)
 
@@ -248,6 +256,7 @@ def patreon_link():
 
 
 @auth_bp.route('/profile/patreon/callback')
+@login_required
 def patreon_callback():
     from flask import current_app
     from retrobridge.integrations.patreon import (
