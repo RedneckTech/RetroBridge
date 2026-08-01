@@ -1495,7 +1495,7 @@ A single-command installer that provisions a bare Linux server (Debian/Ubuntu, R
 
 **Location:** `deploy/install.sh`
 
-#### 8.6.1 Supported Platforms
+#### Supported Platforms
 
 | Family       | Distros                                    | Package Manager | Notes                              |
 | ------------ | ------------------------------------------ | --------------- | ---------------------------------- |
@@ -1503,7 +1503,7 @@ A single-command installer that provisions a bare Linux server (Debian/Ubuntu, R
 | RHEL/Fedora  | RHEL 9+, Fedora 38+, Rocky 9, AlmaLinux 9 | `dnf`/`yum`     | `epel-release` may be needed        |
 | Arch Linux   | Arch (rolling), EndeavourOS                | `pacman`        | Community-maintained               |
 
-#### 8.6.2 Prerequisites
+#### Prerequisites
 
 The script checks for the following before proceeding:
 
@@ -1515,7 +1515,7 @@ The script checks for the following before proceeding:
 | `sqlite3`         | `command -v sqlite3`                   | Install via package manager (diagnostic convenience)    |
 | `gcc` / `make`    | For CPU7Plus build (emulator setup)    | Install via package manager (only if `--emulators`)     |
 
-#### 8.6.3 Command-Line Interface
+#### Command-Line Interface
 
 ```
 deploy/install.sh [OPTIONS]
@@ -1535,7 +1535,7 @@ Options:
   -h, --help          Show usage
 ```
 
-#### 8.6.4 Installation Flow
+#### Installation Flow
 
 The script executes the following stages sequentially. Each stage is idempotent — re-running the script after a partial failure picks up where it left off.
 
@@ -1676,7 +1676,7 @@ Print:
 - `systemctl` commands for managing services
 - Next steps: configure serial ports in admin panel, connect vintage hardware or emulators
 
-#### 8.6.5 Post-Install Directory Layout
+#### Post-Install Directory Layout
 
 ```
 <prefix>/                        # e.g., /srv/retrobridge/
@@ -1712,14 +1712,14 @@ A companion script that installs, configures, and optionally daemonizes the SIMH
 
 **Location:** `deploy/emulators/setup.sh`
 
-#### 8.7.1 Supported Emulators
+#### Supported Emulators
 
 | Emulator      | Source                                                 | License              | Disk Images             |
 | ------------- | ------------------------------------------------------ | -------------------- | ----------------------- |
-| Open SIMH     | `apt install simh` / `dnf install simh` / build from source | BSD-like (MIT)       | User-supplied (see §8.7.3) |
+| Open SIMH     | `apt install simh` / `dnf install simh` / build from source | BSD-like (MIT)       | User-supplied (see Disk Image Licensing below) |
 | CPU7Plus      | [github.com/tergav17/CPU7Plus](https://github.com/tergav17/CPU7Plus) — build from source | MIT                  | User-supplied (proprietary, not redistributable) |
 
-#### 8.7.2 Command-Line Interface
+#### Command-Line Interface
 
 ```
 deploy/emulators/setup.sh [OPTIONS]
@@ -1739,7 +1739,7 @@ Options:
   -h, --help            Show usage
 ```
 
-#### 8.7.3 Disk Image Licensing
+#### Disk Image Licensing
 
 PDP-11 and Centurion operating systems are proprietary software with specific licensing terms. The setup script does **not** download or distribute disk images.
 
@@ -1753,7 +1753,7 @@ PDP-11 and Centurion operating systems are proprietary software with specific li
 
 The script validates that disk images exist and have a minimum size, but does not verify content or licensing compliance.
 
-#### 8.7.4 Installation Flow
+#### Installation Flow
 
 **Stage 1: Binary installation** (skipped if `--configure-only`)
 
