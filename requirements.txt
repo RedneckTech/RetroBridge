@@ -5,6 +5,7 @@ Flask-SocketIO==5.3.*
 SQLAlchemy==2.0.*
 pyserial==3.5
 xmodem==0.4.*
+requests==2.32.*
 gunicorn==21.*
 eventlet==0.36.*
 werkzeug==3.0.*

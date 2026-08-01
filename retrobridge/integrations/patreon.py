@@ -21,15 +21,6 @@ PATREON_TOKEN_URL = 'https://www.patreon.com/api/oauth2/token'
 PATREON_IDENTITY_URL = 'https://www.patreon.com/api/oauth2/v2/identity'
 PATREON_MEMBERS_URL = 'https://www.patreon.com/api/oauth2/v2/campaigns/{campaign_id}/members'
 
-TIER_FIELDS = [
-    ('patreon_tier_bronze_jobs', '10'),
-    ('patreon_tier_bronze_sessions', '3'),
-    ('patreon_tier_silver_jobs', '50'),
-    ('patreon_tier_silver_sessions', '10'),
-    ('patreon_tier_gold_jobs', '999'),
-    ('patreon_tier_gold_sessions', '20'),
-]
-
 
 def _get_setting(key, default=''):
     from retrobridge.admin.settings_utils import _get_raw
@@ -116,11 +107,12 @@ def refresh_access_token(refresh_token):
         return None
 
 
-def get_valid_token(user):
+def get_valid_token(user, db_session):
     """Return a valid access token for the user, refreshing if needed.
 
     If the token is expired or about to expire (< 5 min remaining),
     attempt a refresh. Returns the access token string or None.
+    Mutations are committed to the database.
     """
     if not user.patreon_access_token:
         return None
@@ -145,6 +137,7 @@ def get_valid_token(user):
     user.patreon_expires_at = datetime.now(timezone.utc) + timedelta(
         seconds=refreshed['expires_in'],
     )
+    db_session.commit()
     return refreshed['access_token']
 
 
@@ -203,10 +196,9 @@ def fetch_membership_tier(access_token):
                     'tier', {},
                 ).get('data', {}).get('id', '')
                 if tier_id:
-                    tier_name = _resolve_tier_name(tier_id, data)
+                    tier_name = _resolve_tier_name(tier_id, data, access_token)
                     if tier_name:
                         return tier_name
-                return 'Bronze'
 
         return None
     except Exception:
@@ -214,13 +206,16 @@ def fetch_membership_tier(access_token):
         return None
 
 
-def _resolve_tier_name(tier_id, api_data):
-    """Map a Patreon tier ID to a tier name using included tier objects."""
+def _resolve_tier_name(tier_id, api_data, access_token=None):
+    """Map a Patreon tier ID to a tier name using included tier objects.
+    Falls back to a direct API call if not found in the included data."""
     for included in api_data.get('included', []):
         if included.get('id') == tier_id and included.get('type') == 'tier':
             title = included.get('attributes', {}).get('title', '').strip()
             if title:
                 return title
+    if access_token:
+        return resolve_tier_name_from_api(tier_id, access_token)
     return None
 
 
@@ -265,20 +260,22 @@ def get_tier_limits(tier_name):
     return jobs, sessions
 
 
-def sync_user_tier(user):
+def sync_user_tier(user, db_session):
     """Refresh the user's Patreon tier from the API.
 
     Calls get_valid_token to refresh if needed, then fetches
     the current membership tier. Updates user.patreon_tier.
-    Returns the new tier name or None.
+    Commits changes to the database. Returns the new tier name or None.
     """
-    token = get_valid_token(user)
+    token = get_valid_token(user, db_session)
     if not token:
         user.patreon_tier = None
+        db_session.commit()
         return None
 
     tier = fetch_membership_tier(token)
     user.patreon_tier = tier
+    db_session.commit()
     return tier
 
 

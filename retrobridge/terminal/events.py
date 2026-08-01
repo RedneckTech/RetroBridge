@@ -73,7 +73,14 @@ def register_socketio_events(socketio):
             .filter_by(user_id=current_user.id, status='active')
             .count()
         )
-        if active_count >= current_user.max_terminal_sessions:
+        max_sessions = current_user.max_terminal_sessions
+        if current_user.patreon_tier:
+            from retrobridge.integrations.patreon import get_tier_limits
+            _, tier_sessions = get_tier_limits(current_user.patreon_tier)
+            if tier_sessions and tier_sessions > max_sessions:
+                max_sessions = tier_sessions
+
+        if active_count >= max_sessions:
             emit('session_denied', {'reason': 'Maximum terminal sessions reached'})
             return
 
