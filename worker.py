@@ -23,14 +23,18 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
 from serial import Serial, SerialException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from xmodem import XMODEM1k
 
+load_dotenv()
+
 # Add the project root to the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import config  # noqa: E402
 from retrobridge.models import Base, Device, DevicePort, Job, User  # noqa: E402
 from retrobridge.transport import open_transport, transport_uses_baud  # noqa: E402
 from retrobridge.integrations.email import notify_job_completed  # noqa: E402
@@ -40,31 +44,23 @@ LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 
 def build_engine():
-    env = os.environ.get('FLASK_ENV', 'development')
-    basedir = os.path.dirname(os.path.abspath(__file__))
+    db_uri = config.get_database_uri()
 
-    if env == 'production':
-        db_path = os.path.join(basedir, 'instance', 'retrobridge.db')
-    else:
-        db_path = os.environ.get(
-            'DATABASE_URL',
-            f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}',
-        )
-        if db_path.startswith('sqlite:///'):
-            pass
-        else:
-            db_path = f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}'
-
-    if not str(db_path).startswith('sqlite:///'):
-        db_path = f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}'
-
-    engine = create_engine(
-        db_path,
-        connect_args={'timeout': 10},
+    connect_args = config.BaseConfig.SQLALCHEMY_ENGINE_OPTIONS.get(
+        'connect_args', {'timeout': 10},
     )
 
+    engine = create_engine(db_uri, connect_args=connect_args)
+
     from retrobridge.sqlite_provision import configure_sqlite_engine
-    configure_sqlite_engine(engine)
+
+    env = os.environ.get('FLASK_ENV', 'development')
+    if env == 'production' and hasattr(config.ProdConfig, 'SQLITE_PRAGMAS'):
+        pragma_config = {'SQLITE_PRAGMAS': config.ProdConfig.SQLITE_PRAGMAS}
+    else:
+        pragma_config = None
+
+    configure_sqlite_engine(engine, pragma_config)
 
     return engine
 

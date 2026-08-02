@@ -4,6 +4,39 @@ from datetime import timedelta
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 
+def get_database_uri():
+    """Return the normalized database URI for all components.
+
+    Reads DATABASE_URL from the environment.  SQLite relative paths
+    are normalized to absolute paths anchored at the project root.
+
+    In production, a missing DATABASE_URL raises RuntimeError.
+    In development, falls back to the dev database.
+    """
+    env = os.environ.get('FLASK_ENV', 'development')
+    db_url = os.environ.get('DATABASE_URL')
+
+    if db_url:
+        return _normalize_sqlite_path(db_url)
+
+    if env == 'production':
+        raise RuntimeError(
+            'DATABASE_URL must be set in production. '
+            'No implicit database path is allowed.'
+        )
+
+    return f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}'
+
+
+def _normalize_sqlite_path(uri):
+    """If *uri* is a sqlite:/// scheme with a relative path, make it absolute."""
+    if uri.startswith('sqlite:///'):
+        path = uri[10:]
+        if not os.path.isabs(path):
+            return f'sqlite:///{os.path.join(basedir, path)}'
+    return uri
+
+
 class BaseConfig:
     SECRET_KEY = os.environ.get('SECRET_KEY', 'change-me-in-production')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
@@ -47,10 +80,7 @@ class DevConfig(BaseConfig):
     TESTING = False
     SESSION_COOKIE_SECURE = False
     SOCKETIO_ASYNC_MODE = 'threading'
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL',
-        f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}',
-    )
+    SQLALCHEMY_DATABASE_URI = get_database_uri()
 
     SECURITY_HEADERS = {
         'X-Frame-Options': 'DENY',
@@ -74,10 +104,7 @@ class ProdConfig(BaseConfig):
     DEBUG = False
     TESTING = False
     SOCKETIO_ASYNC_MODE = 'eventlet'
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL',
-        f'sqlite:///{os.path.join(basedir, "instance", "retrobridge.db")}',
-    )
+    SQLALCHEMY_DATABASE_URI = get_database_uri()
     SQLITE_PRAGMAS = {
         'journal_mode': 'WAL',
         'synchronous': 'NORMAL',
