@@ -18,14 +18,15 @@ import logging
 import os
 import select
 import signal
+import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from serial import Serial, SerialException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select as sa_select, update
 from sqlalchemy.orm import Session, sessionmaker
 from xmodem import XMODEM1k
 
@@ -41,6 +42,9 @@ from retrobridge.integrations.email import notify_job_completed  # noqa: E402
 
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+JOB_LEASE_SECONDS = 300
+JOB_HEARTBEAT_INTERVAL = 30
 
 
 def build_engine():
@@ -171,12 +175,75 @@ def _manual_xmodem_send(ser, stream, _log_line):
     return False
 
 
-def claim_job(session: Session, device_name: str) -> Job | None:
+def _worker_id(device_name):
+    return f"{socket.gethostname()}:{os.getpid()}:{device_name}"
+
+
+def _send_heartbeat(job_id, session_factory, logger):
+    """Update heartbeat_at and lease_expires_at on the claimed job."""
+    try:
+        now = datetime.now(timezone.utc)
+        session = session_factory()
+        session.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(
+                heartbeat_at=now,
+                lease_expires_at=now + timedelta(seconds=JOB_LEASE_SECONDS),
+            )
+        )
+        session.commit()
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        logger.debug('Heartbeat update failed, will retry next cycle')
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def recover_stale_jobs(session, device_id, logger=None):
+    """Reset jobs with expired leases back to queued."""
+    now = datetime.now(timezone.utc)
+    result = session.execute(
+        update(Job)
+        .where(
+            Job.device_id == device_id,
+            Job.status == 'running',
+            Job.lease_expires_at.isnot(None),
+            Job.lease_expires_at < now,
+        )
+        .values(
+            status='queued',
+            port_id=None,
+            started_at=None,
+            worker_pid=None,
+            claimed_by=None,
+            claimed_at=None,
+            lease_expires_at=None,
+            heartbeat_at=None,
+        )
+    )
+    if result.rowcount:
+        session.commit()
+        if logger:
+            logger.info(
+                'Recovered %d stale job(s) for device id %d',
+                result.rowcount, device_id,
+            )
+
+
+def claim_job(session: Session, device_name: str, logger=None) -> Job | None:
     device = session.query(Device).filter_by(name=device_name, is_enabled=True).first()
     if not device:
         return None
 
-    # Find all enabled job_queue ports for this device
+    recover_stale_jobs(session, device.id, logger)
+
     job_ports = (
         session.query(DevicePort)
         .filter_by(device_id=device.id, purpose='job_queue', is_enabled=True)
@@ -186,7 +253,6 @@ def claim_job(session: Session, device_name: str) -> Job | None:
         return None
 
     try:
-        # For each port, find a queued job that could run on it
         for port in job_ports:
             running_count = (
                 session.query(Job)
@@ -196,20 +262,49 @@ def claim_job(session: Session, device_name: str) -> Job | None:
             if running_count >= port.max_concurrent_jobs:
                 continue
 
-            job = (
-                session.query(Job)
-                .filter(Job.device_id == device.id, Job.status == 'queued')
-                .order_by(Job.priority.desc(), Job.created_at.asc())
-                .first()
+            now = datetime.now(timezone.utc)
+            lease_until = now + timedelta(seconds=JOB_LEASE_SECONDS)
+            wid = _worker_id(device_name)
+
+            result = session.execute(
+                update(Job)
+                .where(
+                    Job.id == (
+                        sa_select(Job.id)
+                        .where(
+                            Job.device_id == device.id,
+                            Job.status == 'queued',
+                        )
+                        .order_by(Job.priority.desc(), Job.created_at.asc())
+                        .limit(1)
+                        .scalar_subquery()
+                    )
+                )
+                .values(
+                    status='running',
+                    port_id=port.id,
+                    started_at=now,
+                    worker_pid=os.getpid(),
+                    claimed_by=wid,
+                    claimed_at=now,
+                    lease_expires_at=lease_until,
+                    heartbeat_at=now,
+                )
+                .returning(Job.id)
             )
-            if not job:
+            row = result.fetchone()
+
+            if row is None:
+                session.rollback()
                 continue
 
-            job.status = 'running'
-            job.port_id = port.id
-            job.started_at = datetime.now(timezone.utc)
-            job.worker_pid = os.getpid()
             session.commit()
+            job = session.get(Job, row[0])
+            if job and logger:
+                logger.info(
+                    'Claimed job #%d (%s) on port %s',
+                    job.id, job.original_filename, port.port_label,
+                )
             return job
 
         return None
@@ -218,7 +313,8 @@ def claim_job(session: Session, device_name: str) -> Job | None:
         return None
 
 
-def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> bool:
+def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
+                      session_factory=None) -> bool:
     """
     Execute a job on the given serial port.
     Returns True on success, False on failure.
@@ -338,6 +434,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
             max_runtime = port.max_runtime_seconds or 300
             start_time = time.time()
             last_activity = start_time
+            last_heartbeat = start_time
 
             logger.info(f'Capturing output (idle timeout: {idle_timeout}s, max runtime: {max_runtime}s)')
             _log_line(f'Capturing output...', 'SYS')
@@ -347,6 +444,10 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger) -> boo
                 if elapsed > max_runtime:
                     _log_line(f'Maximum runtime ({max_runtime}s) reached', 'SYS')
                     break
+
+                if session_factory and (elapsed - last_heartbeat) >= JOB_HEARTBEAT_INTERVAL:
+                    _send_heartbeat(job.id, session_factory, logger)
+                    last_heartbeat = elapsed
 
                 try:
                     data = _fd_read(ser.fd, 1024, 0.2)
@@ -415,7 +516,7 @@ def worker_loop(device_name: str, poll_interval: int = 5):
     while not shutdown_flag:
         session = SessionLocal()
         try:
-            job = claim_job(session, device_name)
+            job = claim_job(session, device_name, logger)
             if job:
                 port = job.port
                 if not port:
@@ -429,7 +530,7 @@ def worker_loop(device_name: str, poll_interval: int = 5):
                 logger.info(f'Claimed job #{job.id}: {job.original_filename} '
                              f'on port {port.port_label} ({port.dev_path})')
 
-                success = run_job_on_device(job, port, logger)
+                success = run_job_on_device(job, port, logger, SessionLocal)
 
                 session.add(job)
                 session.commit()
