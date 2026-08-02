@@ -26,25 +26,20 @@ import argparse
 import os
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Ensure the project root is on sys.path so we can import retrobridge.backup
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_root)
 
-from retrobridge.backup import backup_database, prune_backups, list_backups
+import config  # noqa: E402
+from retrobridge.backup import backup_database, prune_backups, list_backups  # noqa: E402
 
 
 def _default_db_uri():
-    env = os.environ.get('FLASK_ENV', 'development')
-    basedir = _project_root
-    if env == 'production':
-        return os.environ.get(
-            'DATABASE_URL',
-            f'sqlite:///{os.path.join(basedir, "instance", "retrobridge.db")}',
-        )
-    return os.environ.get(
-        'DATABASE_URL',
-        f'sqlite:///{os.path.join(basedir, "instance", "retrobridge_dev.db")}',
-    )
+    return config.get_database_uri()
 
 
 def main():
