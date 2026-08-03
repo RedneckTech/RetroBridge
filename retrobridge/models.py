@@ -97,6 +97,7 @@ class DevicePort(Base):
     device = relationship('Device', back_populates='ports')
     jobs = relationship('Job', back_populates='port')
     terminal_sessions = relationship('TerminalSession', back_populates='port')
+    port_leases = relationship('PortLease', back_populates='port')
 
 
 class Job(Base):
@@ -150,6 +151,7 @@ class TerminalSession(Base):
     user = relationship('User', back_populates='terminal_sessions')
     device = relationship('Device', back_populates='terminal_sessions')
     port = relationship('DevicePort', back_populates='terminal_sessions')
+    port_leases = relationship('PortLease', back_populates='session')
 
 
 class LoginAttempt(Base):
@@ -160,6 +162,23 @@ class LoginAttempt(Base):
     username = Column(String(64), nullable=True, index=True)
     success = Column(Boolean, default=False, nullable=False)
     attempted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PortLease(Base):
+    __tablename__ = 'port_leases'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    port_id = Column(Integer, ForeignKey('device_ports.id'),
+                     unique=True, nullable=False)
+    session_id = Column(Integer, ForeignKey('terminal_sessions.id'),
+                        nullable=False)
+    claimed_by = Column(String(128), nullable=False)
+    claimed_at = Column(DateTime, nullable=False)
+    lease_expires_at = Column(DateTime, nullable=False)
+    heartbeat_at = Column(DateTime, nullable=False)
+
+    port = relationship('DevicePort', back_populates='port_leases')
+    session = relationship('TerminalSession', back_populates='port_leases')
 
 
 class AdminSetting(Base):

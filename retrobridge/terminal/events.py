@@ -84,7 +84,7 @@ def register_socketio_events(socketio):
             emit('session_denied', {'reason': 'Maximum terminal sessions reached'})
             return
 
-        # Find available interactive port
+        # Find available interactive port using DB-backed leases
         interactive_ports = (
             current_app.db_session.query(DevicePort)
             .filter_by(device_id=device_id, purpose='interactive', is_enabled=True)
@@ -92,22 +92,24 @@ def register_socketio_events(socketio):
         )
 
         available_port = None
+        session = None
         for port in interactive_ports:
-            if utils.allocate_port(port):
+            session = utils.create_session(
+                current_app.db_session,
+                current_user.id,
+                device_id,
+                port.id,
+            )
+            if utils.acquire_port_lease(current_app.db_session, port.id, session.id):
                 available_port = port
                 break
+            current_app.db_session.delete(session)
+            current_app.db_session.commit()
+            session = None
 
         if not available_port:
             emit('session_denied', {'reason': 'All interactive ports are currently in use'})
             return
-
-        # Create session record
-        session = utils.create_session(
-            current_app.db_session,
-            current_user.id,
-            device_id,
-            available_port.id,
-        )
 
         # Start the serial bridge
         success = utils.start_bridge(socketio, sid, session, available_port)
@@ -144,6 +146,12 @@ def register_socketio_events(socketio):
             bridge = utils._active_bridges.get(sid)
             if bridge and bridge['running']:
                 bridge['last_activity'] = time.time()
+                try:
+                    utils.heartbeat_port_lease(
+                        current_app.db_session, bridge['session_id'],
+                    )
+                except Exception:
+                    pass
                 emit('heartbeat_ack', {
                     'bytes_sent': bridge.get('bytes_sent', 0),
                     'bytes_received': bridge.get('bytes_received', 0),
