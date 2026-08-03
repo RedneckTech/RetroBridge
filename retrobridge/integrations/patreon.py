@@ -11,6 +11,7 @@ Configured via AdminSetting keys:
 
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import requests
 
@@ -52,8 +53,7 @@ def get_authorize_url(redirect_uri, state=''):
         'scope': 'identity identity.memberships',
         'state': state,
     }
-    qs = '&'.join(f'{k}={v}' for k, v in params.items())
-    return f'{PATREON_AUTHORIZE_URL}?{qs}'
+    return f'{PATREON_AUTHORIZE_URL}?{urlencode(params)}'
 
 
 def exchange_code(code, redirect_uri):

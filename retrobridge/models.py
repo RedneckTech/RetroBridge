@@ -29,12 +29,32 @@ class User(Base):
     email_notify_security = Column(Boolean, default=True, nullable=False)
     patreon_id = Column(String(64), nullable=True, unique=True)
     patreon_tier = Column(String(32), nullable=True)
-    patreon_access_token = Column(Text, nullable=True)
-    patreon_refresh_token = Column(Text, nullable=True)
+    _patreon_access_token = Column('patreon_access_token', Text, nullable=True)
+    _patreon_refresh_token = Column('patreon_refresh_token', Text, nullable=True)
     patreon_expires_at = Column(DateTime, nullable=True)
 
     jobs = relationship('Job', back_populates='user')
     terminal_sessions = relationship('TerminalSession', back_populates='user')
+
+    @property
+    def patreon_access_token(self):
+        from retrobridge.integrations.patreon_crypto import decrypt_token
+        return decrypt_token(self._patreon_access_token)
+
+    @patreon_access_token.setter
+    def patreon_access_token(self, value):
+        from retrobridge.integrations.patreon_crypto import encrypt_token
+        self._patreon_access_token = encrypt_token(value)
+
+    @property
+    def patreon_refresh_token(self):
+        from retrobridge.integrations.patreon_crypto import decrypt_token
+        return decrypt_token(self._patreon_refresh_token)
+
+    @patreon_refresh_token.setter
+    def patreon_refresh_token(self, value):
+        from retrobridge.integrations.patreon_crypto import encrypt_token
+        self._patreon_refresh_token = encrypt_token(value)
 
     def avatar_url(self, size=80):
         h = hashlib.md5(self.email.strip().lower().encode()).hexdigest()

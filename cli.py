@@ -88,6 +88,23 @@ def register_cli_commands(app):
             click.echo(f'{b["filename"]:<50} {size:>10}  {b["modified"].strftime("%Y-%m-%d %H:%M:%S"):<20}')
         click.echo(f'\n{len(backups)} backup(s) in {backup_dir}')
 
+    @db_cli.command('migrate-tokens')
+    def db_migrate_tokens():
+        from retrobridge.integrations.patreon_crypto import encrypt_token
+        from retrobridge.models import User
+        s = app.db_session
+        users = s.query(User).all()
+        count = 0
+        for user in users:
+            access = getattr(user, '_patreon_access_token', None)
+            refresh = getattr(user, '_patreon_refresh_token', None)
+            if access or refresh:
+                user._patreon_access_token = encrypt_token(access) if access else None
+                user._patreon_refresh_token = encrypt_token(refresh) if refresh else None
+                count += 1
+        s.commit()
+        click.echo(f'Encrypted Patreon tokens for {count} user(s).')
+
     app.cli.add_command(db_cli)
 
     @app.cli.command('init-db')
