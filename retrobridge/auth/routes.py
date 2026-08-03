@@ -1,7 +1,9 @@
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urljoin, urlparse
 
-from flask import render_template, redirect, url_for, flash, request
+from flask import render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -39,6 +41,16 @@ def _is_throttled(db_session, ip_address):
         .count()
     )
     return count >= MAX_FAILED_ATTEMPTS
+
+
+def _is_safe_redirect_url(target):
+    if not target:
+        return False
+    if target.startswith('/') and not target.startswith('//'):
+        return True
+    ref = urlparse(request.host_url)
+    test = urlparse(urljoin(request.host_url, target))
+    return test.scheme in ('http', 'https') and test.netloc == ref.netloc
 
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
@@ -92,7 +104,9 @@ def login():
 
             flash('Logged in successfully.', 'success')
             next_page = request.args.get('next')
-            return redirect(next_page or url_for('jobs.dashboard'))
+            if next_page and _is_safe_redirect_url(next_page):
+                return redirect(next_page)
+            return redirect(url_for('jobs.dashboard'))
         else:
             _record_attempt(current_app.db_session, ip_address,
                             form.username.data, success=False)
@@ -251,7 +265,8 @@ def patreon_link():
         flash('Patreon integration is not configured.', 'warning')
         return redirect(url_for('auth.profile'))
     redirect_uri = url_for('auth.patreon_callback', _external=True)
-    state = str(current_user.id)
+    state = secrets.token_urlsafe(32)
+    session['patreon_oauth_state'] = state
     return redirect(get_authorize_url(redirect_uri, state=state))
 
 
@@ -271,19 +286,13 @@ def patreon_callback():
         flash(f'Patreon authorization failed: {error}', 'danger')
         return redirect(url_for('auth.profile'))
 
-    if not code or not state:
+    expected_state = session.pop('patreon_oauth_state', None)
+    if not code or not state or not expected_state:
         flash('Invalid Patreon callback parameters.', 'danger')
         return redirect(url_for('auth.profile'))
 
-    try:
-        user_id = int(state)
-    except (ValueError, TypeError):
-        flash('Invalid state parameter.', 'danger')
-        return redirect(url_for('auth.profile'))
-
-    user = current_app.db_session.get(User, user_id)
-    if not user or user.id != current_user.id:
-        flash('Authentication error.', 'danger')
+    if not secrets.compare_digest(state, expected_state):
+        flash('Invalid OAuth state parameter.', 'danger')
         return redirect(url_for('auth.profile'))
 
     redirect_uri = url_for('auth.patreon_callback', _external=True)
