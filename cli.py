@@ -94,7 +94,20 @@ def register_cli_commands(app):
     def init_db_alias():
         _auto_backup(app)
         from retrobridge.models import Base
+        from sqlalchemy import inspect, text
         Base.metadata.create_all(bind=app.db_engine)
+
+        inspector = inspect(app.db_engine)
+        if 'jobs' in inspector.get_table_names():
+            existing_cols = {c['name'] for c in inspector.get_columns('jobs')}
+            if 'cancel_requested' not in existing_cols:
+                with app.db_engine.connect() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT 0"
+                    ))
+                    conn.commit()
+                click.echo('Migration: added cancel_requested column to jobs.')
+
         click.echo('Database tables created.')
 
     @app.cli.command('seed')

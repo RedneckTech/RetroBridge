@@ -127,6 +127,7 @@ class Job(Base):
     override_newline_mode = Column(String(4), nullable=True)
     override_pre_transfer_cmds = Column(Text, nullable=True)
     override_post_transfer_cmds = Column(Text, nullable=True)
+    cancel_requested = Column(Boolean, default=False, nullable=False)
 
     user = relationship('User', back_populates='jobs')
     device = relationship('Device', back_populates='jobs')

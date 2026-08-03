@@ -222,17 +222,24 @@ def cancel_job(db_session, job_id, user_id, is_admin=False):
     if job.user_id != user_id and not is_admin:
         return False, 'Not authorized'
 
+    if job.status in ('completed', 'failed', 'canceled'):
+        return False, 'Job already finished'
+
+    if job.cancel_requested:
+        return False, 'Cancellation already requested'
+
     if job.status == 'queued':
+        job.cancel_requested = True
         job.status = 'canceled'
         db_session.commit()
         return True, 'Job canceled'
 
     if job.status == 'running' and is_admin:
-        job.status = 'canceled'
+        job.cancel_requested = True
         db_session.commit()
-        return True, 'Job force-canceled'
+        return True, 'Cancellation requested — worker will stop shortly'
 
-    return False, 'Cannot cancel a running or completed job'
+    return False, 'Cannot cancel a running job'
 
 
 def get_job_or_403(db_session, job_id, user_id, is_admin=False):
