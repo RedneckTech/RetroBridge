@@ -166,15 +166,22 @@ def register_error_handlers(app):
 
 
 def _cleanup_orphaned_sessions(app):
-    """Mark any active TerminalSession records as disconnected on startup.
+    """Mark active sessions disconnected and clear all port leases on startup.
 
     Active bridges are held in-memory and are lost when the server
     stops.  Any session still marked 'active' in the database after a
-    restart is orphaned and must be cleaned up so the port can be
-    reused and users see accurate session history.
+    restart is orphaned, and all port leases are stale.  Clean both up
+    so ports can be reused and users see accurate session history.
     """
     from datetime import datetime, timezone
-    from retrobridge.models import TerminalSession
+    from sqlalchemy import delete
+    from retrobridge.models import PortLease, TerminalSession
+
+    try:
+        app.db_session.execute(delete(PortLease))
+        app.db_session.commit()
+    except Exception:
+        app.db_session.rollback()
 
     try:
         sessions = app.db_session.query(TerminalSession).filter_by(

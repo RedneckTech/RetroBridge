@@ -15,13 +15,15 @@ Each active session has:
 import json
 import logging
 import os
+import socket
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from serial import Serial, SerialException
+from sqlalchemy import delete, update
 
-from retrobridge.models import TerminalSession
+from retrobridge.models import PortLease, TerminalSession
 from retrobridge.transport import open_transport, transport_uses_baud
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,108 @@ _active_bridges = {}
 _suspended_bridges = {}
 _lock = threading.Lock()
 GRACE_PERIOD = 600
+TERMINAL_LEASE_SECONDS = 300
+
+
+def _terminal_worker_id():
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+# ---------------------------------------------------------------------------
+# Port lease functions (database-backed, cross-worker safe)
+# ---------------------------------------------------------------------------
+
+def recover_stale_leases(db_session):
+    """Delete expired port leases and mark their sessions as disconnected."""
+    now = datetime.now(timezone.utc)
+    expired = (
+        db_session.query(PortLease)
+        .filter(PortLease.lease_expires_at < now)
+        .all()
+    )
+    for lease in expired:
+        session = db_session.get(TerminalSession, lease.session_id)
+        if session and session.status == 'active':
+            session.status = 'disconnected'
+            session.disconnect_reason = 'lease_expired'
+            session.disconnected_at = now
+            if session.connected_at:
+                connected = session.connected_at
+                if connected.tzinfo is None:
+                    from datetime import timezone as tz
+                    connected = connected.replace(tzinfo=tz.utc)
+                session.duration_seconds = int((now - connected).total_seconds())
+        db_session.delete(lease)
+    if expired:
+        db_session.commit()
+
+
+def acquire_port_lease(db_session, port_id, session_id):
+    """Atomically claim a port lease.  Returns True if the port was acquired."""
+    recover_stale_leases(db_session)
+
+    now = datetime.now(timezone.utc)
+    lease_until = now + timedelta(seconds=TERMINAL_LEASE_SECONDS)
+
+    try:
+        db_session.add(PortLease(
+            port_id=port_id,
+            session_id=session_id,
+            claimed_by=_terminal_worker_id(),
+            claimed_at=now,
+            lease_expires_at=lease_until,
+            heartbeat_at=now,
+        ))
+        db_session.commit()
+        return True
+    except Exception:
+        db_session.rollback()
+        return False
+
+
+def heartbeat_port_lease(db_session, session_id):
+    """Extend the lease expiration for an active terminal session."""
+    now = datetime.now(timezone.utc)
+    lease_until = now + timedelta(seconds=TERMINAL_LEASE_SECONDS)
+    try:
+        db_session.execute(
+            update(PortLease)
+            .where(PortLease.session_id == session_id)
+            .values(heartbeat_at=now, lease_expires_at=lease_until)
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+
+
+def release_port_lease(db_session, session_id):
+    """Remove the port lease for a terminal session."""
+    try:
+        db_session.execute(
+            delete(PortLease).where(PortLease.session_id == session_id)
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Legacy port-allocation helpers (kept for backward compatibility)
+# ---------------------------------------------------------------------------
+
+def allocate_port(port):
+    with _lock:
+        for _sid, bridge in _active_bridges.items():
+            if bridge['port_id'] == port.id and bridge['running']:
+                return False
+        for _sid, bridge in _suspended_bridges.items():
+            if bridge['port_id'] == port.id and bridge['running']:
+                return False
+        return True
+
+
+def release_port(port):
+    pass
 
 
 def _session_log_path(session_id):
@@ -70,21 +174,6 @@ def get_serial_params(port):
     }
 
 
-def allocate_port(port):
-    with _lock:
-        for sid, bridge in _active_bridges.items():
-            if bridge['port_id'] == port.id and bridge['running']:
-                return False
-        for sid, bridge in _suspended_bridges.items():
-            if bridge['port_id'] == port.id and bridge['running']:
-                return False
-        return True
-
-
-def release_port(port):
-    pass
-
-
 def create_session(db_session, user_id, device_id, port_id):
     session = TerminalSession(
         user_id=user_id,
@@ -110,7 +199,10 @@ def end_session(db_session, session_id, reason='user_disconnect'):
                 from datetime import timezone as tz
                 connected = connected.replace(tzinfo=tz.utc)
             session.duration_seconds = int((now - connected).total_seconds())
-        db_session.commit()
+    db_session.execute(
+        delete(PortLease).where(PortLease.session_id == session_id)
+    )
+    db_session.commit()
 
 
 def _serial_reader(socketio, ser, session_id):
