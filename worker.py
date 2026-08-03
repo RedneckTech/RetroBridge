@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from serial import Serial, SerialException
 from sqlalchemy import create_engine, select as sa_select, update
 from sqlalchemy.orm import Session, sessionmaker
-from xmodem import XMODEM1k
+from xmodem import XMODEM, XMODEM1k
 
 load_dotenv()
 
@@ -120,59 +120,30 @@ def _fd_read(fd, size, timeout):
 
 
 def _fd_write(fd, data):
-    """Write all data to fd."""
-    return os.write(fd, data)
+    """Write all data to fd, handling partial writes."""
+    total = 0
+    while total < len(data):
+        n = os.write(fd, data[total:])
+        if n <= 0:
+            raise OSError("fd write returned 0 or negative")
+        total += n
+    return total
 
 
-def _manual_xmodem_send(ser, stream, _log_line):
-    """Minimal XMODEM sender using raw fd ops (avoids pyserial PTY hangup errors)."""
-    fd = ser.fd
-    file_size = stream.seek(0, 2)
-    stream.seek(0)
+class JobCancelledError(Exception):
+    """Raised when a job is cancelled mid-transfer."""
 
-    # Wait for 'C' (CRC mode) — drain any stale data, then wait for C
-    # Use raw fd reads to avoid pyserial's "reports readiness" error on PTY hangup
-    deadline = time.time() + 10
-    c = b''
-    while time.time() < deadline:
-        c = _fd_read(fd, 1, 1.0)
-        if c == b'C':
-            break
-    else:
-        _log_line('XMODEM handshake failed: C not received within 10s', 'SYS')
-        return False
 
-    block_num = 1
-    while True:
-        data = stream.read(128)
-        if not data:
-            break
-        if len(data) < 128:
-            data = data.ljust(128, b'\x1a')
-
-        blk = bytes([block_num])
-        blk_cmpl = bytes([255 - block_num])
-        block = b'\x01' + blk + blk_cmpl + data
-        cksum = sum(data) % 256
-        block += bytes([cksum])
-
-        _fd_write(fd, block)
-        ack = _fd_read(fd, 1, 5.0)
-        if ack != b'\x06':
-            _log_line(f'XMODEM: expected ACK, got {repr(ack)}', 'SYS')
-            return False
-
-        block_num = (block_num + 1) % 256
-
-    # Send EOT
-    _fd_write(fd, b'\x04')
-    ack = _fd_read(fd, 1, 5.0)
-    if ack == b'\x06':
-        _log_line('XMODEM transfer complete', 'SYS')
-        return True
-
-    _log_line(f'XMODEM: expected ACK after EOT, got {repr(ack)}', 'SYS')
-    return False
+def _check_job_cancelled(job, session_factory):
+    """Re-read job status from DB; raise if cancelled."""
+    if session_factory:
+        s = session_factory()
+        try:
+            j = s.get(Job, job.id)
+            if j and j.status == 'canceled':
+                raise JobCancelledError("job was cancelled mid-transfer")
+        finally:
+            s.close()
 
 
 def _worker_id(device_name):
@@ -388,22 +359,32 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                 _fd_write(ser.fd, cmd.encode('utf-8', errors='replace'))
                 _log_line(cmd, 'TX')
 
-            # Transfer file via XMODEM (library first, manual fallback)
+            # Transfer file via XMODEM
             time.sleep(0.3)
             logger.info(f'Starting XMODEM transfer of {upload_file}')
             _log_line(f'Starting XMODEM transfer: {job.original_filename}', 'SYS')
 
+            def getc(size, timeout=1):
+                _check_job_cancelled(job, session_factory)
+                data = _fd_read(ser.fd, size, timeout)
+                return data if data else None
+
+            def putc(data, timeout=1):
+                _check_job_cancelled(job, session_factory)
+                return _fd_write(ser.fd, data)
+
+            proto = port.transfer_protocol or 'xmodem'
+            if proto == 'xmodem1k':
+                modem = XMODEM1k(getc, putc)
+            else:
+                modem = XMODEM(getc, putc)
+
             with open(upload_file, 'rb') as f:
-                success = _manual_xmodem_send(ser, f, _log_line)
-                if not success:
-                    f.seek(0)
-                    fd = ser.fd
-                    def getc(size, timeout=1):
-                        return _fd_read(fd, size, timeout) or None
-                    def putc(data, timeout=1):
-                        return _fd_write(fd, data)
-                    modem = XMODEM1k(getc, putc)
+                try:
                     success = modem.send(f, retry=8)
+                except JobCancelledError:
+                    _log_line('Job cancelled during XMODEM transfer', 'SYS')
+                    success = False
 
             if not success:
                 logger.error('XMODEM transfer failed')
