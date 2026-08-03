@@ -191,7 +191,8 @@ class TestAPIAdmin:
         assert data['success'] is True
 
         app.db_session.refresh(job)
-        assert job.status == 'canceled'
+        assert job.status == 'running'
+        assert job.cancel_requested is True
 
     def test_admin_delete_user(self, admin_client, app):
         other = User(username='victim', email='v@ex.com',

@@ -448,8 +448,18 @@ def bulk_cancel_jobs():
     count = 0
     for job_id in ids:
         job = current_app.db_session.get(Job, int(job_id))
-        if job and job.status in ('queued', 'running'):
+        if not job:
+            continue
+        if job.status in ('completed', 'failed', 'canceled'):
+            continue
+        if job.cancel_requested:
+            continue
+        if job.status == 'queued':
+            job.cancel_requested = True
             job.status = 'canceled'
+            count += 1
+        elif job.status == 'running':
+            job.cancel_requested = True
             count += 1
     current_app.db_session.commit()
     flash(f'{count} job(s) canceled.', 'info')

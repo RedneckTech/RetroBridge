@@ -135,13 +135,13 @@ class JobCancelledError(Exception):
 
 
 def _check_job_cancelled(job, session_factory):
-    """Re-read job status from DB; raise if cancelled."""
+    """Re-read job from DB; raise if cancel_requested or status is canceled."""
     if session_factory:
         s = session_factory()
         try:
             j = s.get(Job, job.id)
-            if j and j.status == 'canceled':
-                raise JobCancelledError("job was cancelled mid-transfer")
+            if j and (j.cancel_requested or j.status == 'canceled'):
+                raise JobCancelledError("job was cancelled")
         finally:
             s.close()
 
@@ -178,8 +178,39 @@ def _send_heartbeat(job_id, session_factory, logger):
 
 
 def recover_stale_jobs(session, device_id, logger=None):
-    """Reset jobs with expired leases back to queued."""
+    """Reset jobs with expired leases back to queued, or cancel if requested."""
     now = datetime.now(timezone.utc)
+
+    stale_cancel_requested = session.execute(
+        update(Job)
+        .where(
+            Job.device_id == device_id,
+            Job.status == 'running',
+            Job.lease_expires_at.isnot(None),
+            Job.lease_expires_at < now,
+            Job.cancel_requested.is_(True),
+        )
+        .values(
+            status='canceled',
+            port_id=None,
+            started_at=None,
+            worker_pid=None,
+            claimed_by=None,
+            claimed_at=None,
+            lease_expires_at=None,
+            heartbeat_at=None,
+            error_message='Canceled during stale recovery',
+        )
+    )
+    if stale_cancel_requested.rowcount:
+        session.commit()
+        if logger:
+            logger.info(
+                'Canceled %d stale job(s) with cancel_requested for device id %d',
+                stale_cancel_requested.rowcount, device_id,
+            )
+        return
+
     result = session.execute(
         update(Job)
         .where(
@@ -245,6 +276,7 @@ def claim_job(session: Session, device_name: str, logger=None) -> Job | None:
                         .where(
                             Job.device_id == device.id,
                             Job.status == 'queued',
+                            Job.cancel_requested.is_(False),
                         )
                         .order_by(Job.priority.desc(), Job.created_at.asc())
                         .limit(1)
@@ -313,6 +345,8 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
     ser = None
 
     try:
+        _check_job_cancelled(job, session_factory)
+
         transport = (port.transport or 'serial')
         if transport_uses_baud(port):
             logger.info(f'Opening {transport} port: {serial_params["port"]} '
@@ -384,7 +418,10 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                     success = modem.send(f, retry=8)
                 except JobCancelledError:
                     _log_line('Job cancelled during XMODEM transfer', 'SYS')
-                    success = False
+                    job.status = 'canceled'
+                    job.error_message = 'Job canceled by administrator'
+                    job.finished_at = datetime.now(timezone.utc)
+                    return False
 
             if not success:
                 logger.error('XMODEM transfer failed')
@@ -431,6 +468,11 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                     last_heartbeat = elapsed
 
                 try:
+                    _check_job_cancelled(job, session_factory)
+                except JobCancelledError:
+                    break
+
+                try:
                     data = _fd_read(ser.fd, 1024, 0.2)
                 except (OSError, SerialException):
                     _log_line('PTY closed — output capture complete', 'SYS')
@@ -446,18 +488,34 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                         break
                     time.sleep(0.1)
 
-            job.status = 'completed'
-            job.finished_at = datetime.now(timezone.utc)
-            job.runtime_seconds = int(time.time() - start_time)
-            job.exit_code = 0
-            _log_line(f'Job completed successfully ({job.runtime_seconds}s)', 'SYS')
-            return True
+            try:
+                _check_job_cancelled(job, session_factory)
+                job.status = 'completed'
+                job.finished_at = datetime.now(timezone.utc)
+                job.runtime_seconds = int(time.time() - start_time)
+                job.exit_code = 0
+                _log_line(f'Job completed successfully ({job.runtime_seconds}s)', 'SYS')
+                return True
+            except JobCancelledError:
+                _log_line('Job cancelled during output capture', 'SYS')
+                job.status = 'canceled'
+                job.error_message = 'Job canceled by administrator'
+                job.finished_at = datetime.now(timezone.utc)
+                job.runtime_seconds = int(time.time() - start_time)
+                return False
 
     except SerialException as e:
         logger.error(f'Serial error: {e}')
         job.status = 'failed'
         job.error_message = f'Serial error: {e}'
         job.finished_at = datetime.now(timezone.utc)
+        return False
+    except JobCancelledError:
+        logger.info(f'Job #{job.id} cancelled')
+        if not job.status or job.status == 'running':
+            job.status = 'canceled'
+            job.error_message = 'Job canceled by administrator'
+            job.finished_at = datetime.now(timezone.utc)
         return False
     except Exception as e:
         logger.exception(f'Unexpected error processing job #{job.id}')
@@ -516,12 +574,11 @@ def worker_loop(device_name: str, poll_interval: int = 5):
                 session.add(job)
                 session.commit()
 
-                status = 'completed' if success else 'failed'
-                logger.info(f'Job #{job.id} {status}')
+                logger.info(f'Job #{job.id} {job.status}')
 
                 # Send email notification if user has opted in
                 user = session.query(User).filter_by(id=job.user_id).first()
-                if user and user.email_notify_jobs and job.status in ('completed', 'failed'):
+                if user and user.email_notify_jobs and job.status in ('completed', 'failed', 'canceled'):
                     try:
                         notify_job_completed(user, job)
                     except Exception:
@@ -535,6 +592,18 @@ def worker_loop(device_name: str, poll_interval: int = 5):
             )
             for cj in canceled:
                 logger.info(f'Job #{cj.id} was force-canceled')
+
+            # Cancel any queued jobs with cancel_requested that weren't claimed
+            orphaned = (
+                session.query(Job)
+                .filter_by(device_id=job.device_id if job else None)
+                .filter(Job.status == 'queued', Job.cancel_requested.is_(True))
+                .all()
+            )
+            for oj in orphaned:
+                oj.status = 'canceled'
+                session.commit()
+                logger.info(f'Job #{oj.id} was canceled (queued with cancel_requested)')
         except Exception as e:
             logger.exception(f'Error in worker loop: {e}')
             session.rollback()

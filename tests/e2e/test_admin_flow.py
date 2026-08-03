@@ -490,7 +490,8 @@ class TestAdminJobs:
         assert resp.status_code == 200
 
         admin_app.db_session.refresh(job)
-        assert job.status == 'canceled'
+        assert job.status == 'running'
+        assert job.cancel_requested is True
 
 
 class TestAdminSessions:
