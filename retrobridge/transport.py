@@ -159,11 +159,19 @@ SE   = 240
 
 
 def _telnet_negotiate(sock, timeout=2):
-    """Read and reject telnet option negotiations."""
+    """Read and reject telnet option negotiations, returning any real data.
+
+    Telnet option sequences (IAC ...) are answered with a negative response
+    and stripped out. Non-IAC bytes are accumulated and returned so they are
+    not lost if the server sends data interleaved with negotiations.
+    """
+    out = bytearray()
     deadline = time.time() + timeout
+    pending_iac = None
+
     while time.time() < deadline:
-        r, _, _ = select.select([sock], [], [], 0.5)
-        if not r:
+        r, _, _ = select.select([sock], [], [], 0.1)
+        if not r and not pending_iac:
             break
         try:
             data = sock.recv(4096)
@@ -171,31 +179,62 @@ def _telnet_negotiate(sock, timeout=2):
             break
         if not data:
             break
+
         i = 0
         while i < len(data):
             b = data[i]
-            if b == IAC:
-                if i + 1 >= len(data):
-                    break
-                cmd = data[i + 1]
+            if pending_iac is not None:
+                cmd = pending_iac
+                pending_iac = None
                 if cmd in (WILL, WONT, DO, DONT):
-                    opt = data[i + 2] if i + 2 < len(data) else 0
+                    opt = data[i] if i < len(data) else 0
                     if cmd == WILL:
                         sock.sendall(bytes([IAC, DONT, opt]))
                     elif cmd == DO:
                         sock.sendall(bytes([IAC, WONT, opt]))
-                    i += 3
+                    i += 1
                 elif cmd == SB:
-                    i += 2
+                    # Skip subnegotiation until IAC SE.
                     while i < len(data):
                         if data[i] == IAC and i + 1 < len(data) and data[i + 1] == SE:
                             i += 2
                             break
                         i += 1
+                # IAC IAC is escaped literal 255; keep it as real data.
+                elif cmd == IAC:
+                    out.append(IAC)
+                continue
+
+            if b == IAC:
+                if i + 1 < len(data):
+                    cmd = data[i + 1]
+                    if cmd in (WILL, WONT, DO, DONT):
+                        opt = data[i + 2] if i + 2 < len(data) else 0
+                        if cmd == WILL:
+                            sock.sendall(bytes([IAC, DONT, opt]))
+                        elif cmd == DO:
+                            sock.sendall(bytes([IAC, WONT, opt]))
+                        i += 3
+                    elif cmd == SB:
+                        i += 2
+                        while i < len(data):
+                            if data[i] == IAC and i + 1 < len(data) and data[i + 1] == SE:
+                                i += 2
+                                break
+                            i += 1
+                    elif cmd == IAC:
+                        out.append(IAC)
+                        i += 2
+                    else:
+                        i += 2
                 else:
-                    i += 2
+                    pending_iac = IAC
+                    i += 1
             else:
-                break
+                out.append(b)
+                i += 1
+
+    return bytes(out)
 
 
 def _open_telnet(address):
@@ -206,12 +245,14 @@ def _open_telnet(address):
         raise SerialException(f'Telnet connect to {host}:{port} failed: {e}')
 
     try:
-        _telnet_negotiate(sock)
+        initial = _telnet_negotiate(sock)
     except OSError:
-        pass
+        initial = b''
 
     sock.setblocking(False)
-    return _SocketWrapper(sock, f'telnet://{host}:{port}')
+    wrapper = _SocketWrapper(sock, f'telnet://{host}:{port}')
+    wrapper._buf = initial
+    return wrapper
 
 
 # ── Socket wrapper ───────────────────────────────────────────────────────────
@@ -229,9 +270,23 @@ class _SocketWrapper:
 
     @property
     def in_waiting(self):
+        """Return the number of bytes available to read.
+
+        If data is already buffered, return the buffer length. Otherwise
+        drain any bytes currently available on the socket into the buffer
+        so that callers can read more than one byte per call.
+        """
+        buf = getattr(self, '_buf', b'')
+        if buf:
+            return len(buf)
         try:
             r, _, _ = select.select([self._sock], [], [], 0)
-            return 1 if r else 0
+            if not r:
+                return 0
+            chunk = self._sock.recv(4096)
+            if chunk:
+                self._buf = buf + chunk
+            return len(self._buf)
         except (OSError, ValueError, TypeError, AttributeError):
             return 0
 

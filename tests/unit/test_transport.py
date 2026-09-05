@@ -212,6 +212,72 @@ class TestSocketWrapper:
         wrapper._sock = None
         assert wrapper.in_waiting == 0
 
+    def test_in_waiting_drains_socket_into_buffer(self):
+        ready = threading.Event()
+        result = []
+        payload = b'hello world'
+
+        def server():
+            srv = socket.create_server(('127.0.0.1', 0))
+            result.append(srv.getsockname()[1])
+            result.append(srv)
+            ready.set()
+            conn, _ = srv.accept()
+            conn.sendall(payload)
+            conn.close()
+            srv.close()
+
+        t = threading.Thread(target=server, daemon=True)
+        t.start()
+        ready.wait(timeout=3)
+
+        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        wrapper = _SocketWrapper(sock)
+        try:
+            # Give the server a moment to send.
+            time.sleep(0.2)
+            assert wrapper.in_waiting == len(payload)
+            assert wrapper.read(len(payload)) == payload
+        finally:
+            wrapper.close()
+            t.join(timeout=2)
+
+
+class TestTelnetNegotiate:
+    def test_preserves_non_iac_data(self):
+        ready = threading.Event()
+        result = []
+        payload = b'login: '
+        will_echo = bytes([255, 251, 1])  # IAC WILL ECHO
+
+        def server():
+            srv = socket.create_server(('127.0.0.1', 0))
+            result.append(srv.getsockname()[1])
+            result.append(srv)
+            ready.set()
+            conn, _ = srv.accept()
+            conn.sendall(will_echo + payload)
+            # Drain any response (IAC DONT ECHO).
+            try:
+                conn.recv(1024)
+            except OSError:
+                pass
+            conn.close()
+            srv.close()
+
+        t = threading.Thread(target=server, daemon=True)
+        t.start()
+        ready.wait(timeout=3)
+
+        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        try:
+            from retrobridge.transport import _telnet_negotiate
+            data = _telnet_negotiate(sock, timeout=1)
+            assert data == payload
+        finally:
+            sock.close()
+            t.join(timeout=2)
+
 
 class TestUnknownTransport:
     def test_unknown_transport_raises(self):
