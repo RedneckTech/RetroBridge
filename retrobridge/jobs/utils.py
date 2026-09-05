@@ -6,7 +6,7 @@ from pathlib import Path
 
 from werkzeug.utils import secure_filename
 
-from retrobridge.models import Job
+from retrobridge.models import Device, Job
 
 ALLOWED_EXTENSIONS = {'bin', 'hex', 'obj', 'asm', 's', 'txt'}
 TEXT_EXTENSIONS = {'txt', 'asm', 's', 'hex'}
@@ -173,6 +173,12 @@ def check_rate_limit(db_session, user_id):
 def create_job(db_session, user_id, device_id, filename, file_obj,
                upload_dir, priority=0, newline_mode='',
                pre_transfer_cmds='', post_transfer_cmds=''):
+    device = db_session.get(Device, device_id)
+    if not device:
+        raise ValueError('Device does not exist.')
+    if not device.is_enabled:
+        raise ValueError('Device is currently disabled.')
+
     safe_name = secure_filename(filename or 'program.bin')
 
     validate_file_content(file_obj, safe_name)
