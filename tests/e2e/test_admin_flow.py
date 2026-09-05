@@ -145,6 +145,38 @@ class TestAdminUserManagement:
         assert resp.status_code == 200
         assert b'Username already taken' in resp.data
 
+    def test_admin_create_user_rejects_weak_password(self, admin_app,
+                                                      admin_client):
+        resp = admin_client.post('/admin/users/create', data={
+            'username': 'weakpass',
+            'email': 'weak@ex.com',
+            'password': 'weak',
+            'full_name': '',
+            'is_admin': False,
+            'max_queued_jobs': 3,
+            'max_terminal_sessions': 1,
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert (
+            b'least 8' in resp.data
+            or b'uppercase' in resp.data.lower()
+            or b'digit' in resp.data.lower()
+        )
+
+    def test_admin_create_user_rejects_duplicate_email(self, admin_app,
+                                                        admin_client):
+        resp = admin_client.post('/admin/users/create', data={
+            'username': 'emaildup',
+            'email': 'reguser@example.com',
+            'password': 'EmailDup1!',
+            'full_name': '',
+            'is_admin': False,
+            'max_queued_jobs': 3,
+            'max_terminal_sessions': 1,
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'Email already in use' in resp.data
+
     def test_admin_can_search_users(self, admin_app, admin_client):
         resp = admin_client.get('/admin/users?search=reg')
         assert resp.status_code == 200

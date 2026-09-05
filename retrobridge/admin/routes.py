@@ -4,7 +4,8 @@ from flask_login import login_required, current_user
 from retrobridge.admin import admin_bp
 from retrobridge.auth.utils import admin_required
 from retrobridge.admin.forms import (
-    DeviceForm, DevicePortForm, EditDeviceForm, SettingsForm, UserEditForm,
+    DeviceForm, DevicePortForm, EditDeviceForm, SettingsForm, UserCreateForm,
+    UserEditForm,
 )
 from retrobridge.models import (
     AdminSetting, Device, DevicePort, Job, TerminalSession, User,
@@ -122,7 +123,7 @@ def create_user():
     from werkzeug.security import generate_password_hash
     from retrobridge.admin.settings_utils import get_int
 
-    form = UserEditForm()
+    form = UserCreateForm()
     form.submit.label.text = 'Create User'
     if form.validate_on_submit():
         existing = current_app.db_session.query(User).filter_by(
@@ -149,6 +150,10 @@ def create_user():
         current_app.db_session.add(user)
         current_app.db_session.commit()
         flash('User created.', 'success')
+    else:
+        for field, errors in form.errors.items():
+            for error in errors:
+                flash(f'{field}: {error}', 'danger')
     return redirect(url_for('admin.users'))
 
 
