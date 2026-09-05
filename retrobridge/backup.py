@@ -93,6 +93,10 @@ def restore_database(backup_path, db_uri):
     The target database is overwritten.  Compressed (``.gz``) files
     are transparently decompressed to a temporary file during restore.
 
+    WARNING: The application should be stopped before restoring the live
+    database. Restoring over an open database may corrupt it or leave
+    cached connections pointing to stale pages.
+
     Parameters
     ----------
     backup_path : str
@@ -120,7 +124,7 @@ def restore_database(backup_path, db_uri):
     temp_path = None
 
     if backup_path.endswith('.gz'):
-        temp_path = backup_path.rstrip('.gz') + '.restore_temp'
+        temp_path = backup_path.removesuffix('.gz') + '.restore_temp'
         with gzip.open(backup_path, 'rb') as f_in:
             with open(temp_path, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
@@ -130,7 +134,8 @@ def restore_database(backup_path, db_uri):
         src = sqlite3.connect(source_path)
         dst = sqlite3.connect(db_path)
         try:
-            src.backup(dst)
+            with dst:
+                src.backup(dst)
         finally:
             dst.close()
             src.close()
