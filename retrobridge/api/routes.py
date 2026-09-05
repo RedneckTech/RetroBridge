@@ -1,6 +1,8 @@
 import json
 import os
+import shutil
 import time
+from pathlib import Path
 
 from flask import jsonify, request, Response, stream_with_context
 from flask_login import login_required, current_user
@@ -266,9 +268,38 @@ def delete_user(user_id):
     if not user:
         return jsonify({'success': False, 'message': 'User not found'}), 404
 
+    _delete_user_directories(current_app, user.id)
+
     current_app.db_session.delete(user)
     current_app.db_session.commit()
     return jsonify({'success': True})
+
+
+def _delete_user_directories(app, user_id):
+    """Remove a user's uploads, outputs, and session logs from disk.
+
+    The cascade handles related DB rows; job/session files are tied to those
+    IDs, so we enumerate the user's jobs and sessions and delete their dirs.
+    """
+    jobs = app.db_session.query(Job).filter_by(user_id=user_id).all()
+    sessions = app.db_session.query(TerminalSession).filter_by(user_id=user_id).all()
+    upload_dir = app.config.get('UPLOAD_DIR')
+    output_dir = app.config.get('OUTPUT_DIR')
+    session_log_dir = app.config.get('SESSION_LOG_DIR')
+    for job in jobs:
+        if upload_dir and job.stored_filename:
+            p = os.path.join(upload_dir, str(Path(job.stored_filename).parent))
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+        if output_dir and job.output_path:
+            p = os.path.dirname(job.output_path)
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+    for session in sessions:
+        if session_log_dir:
+            p = os.path.join(session_log_dir, f'session-{session.id}')
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
 
 
 @api_bp.route('/jobs/<int:job_id>/events')

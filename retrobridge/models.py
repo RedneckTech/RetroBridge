@@ -33,8 +33,10 @@ class User(Base):
     _patreon_refresh_token = Column('patreon_refresh_token', Text, nullable=True)
     patreon_expires_at = Column(DateTime, nullable=True)
 
-    jobs = relationship('Job', back_populates='user')
-    terminal_sessions = relationship('TerminalSession', back_populates='user')
+    jobs = relationship('Job', back_populates='user',
+                        cascade='all, delete-orphan')
+    terminal_sessions = relationship('TerminalSession', back_populates='user',
+                                     cascade='all, delete-orphan')
 
     @property
     def patreon_access_token(self):
@@ -85,9 +87,12 @@ class Device(Base):
     is_enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    ports = relationship('DevicePort', back_populates='device')
-    jobs = relationship('Job', back_populates='device')
-    terminal_sessions = relationship('TerminalSession', back_populates='device')
+    ports = relationship('DevicePort', back_populates='device',
+                         cascade='all, delete-orphan')
+    jobs = relationship('Job', back_populates='device',
+                        cascade='all, delete-orphan')
+    terminal_sessions = relationship('TerminalSession', back_populates='device',
+                                     cascade='all, delete-orphan')
 
 
 class DevicePort(Base):
@@ -115,9 +120,12 @@ class DevicePort(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     device = relationship('Device', back_populates='ports')
-    jobs = relationship('Job', back_populates='port')
-    terminal_sessions = relationship('TerminalSession', back_populates='port')
-    port_leases = relationship('PortLease', back_populates='port')
+    jobs = relationship('Job', back_populates='port',
+                        cascade='all, delete-orphan')
+    terminal_sessions = relationship('TerminalSession', back_populates='port',
+                                     cascade='all, delete-orphan')
+    port_leases = relationship('PortLease', back_populates='port',
+                               cascade='all, delete-orphan')
 
 
 class Job(Base):

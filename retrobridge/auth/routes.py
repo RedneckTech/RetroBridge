@@ -246,10 +246,12 @@ def profile():
 @login_required
 def delete_account():
     from flask import current_app
+    from retrobridge.api.routes import _delete_user_directories
     user = current_app.db_session.get(User, current_user.id)
     if user:
         if user.email_notify_security:
             notify_account_deleted(user)
+        _delete_user_directories(current_app, user.id)
         logout_user()
         current_app.db_session.delete(user)
         current_app.db_session.commit()
