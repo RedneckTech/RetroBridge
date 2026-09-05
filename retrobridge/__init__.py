@@ -136,7 +136,8 @@ def create_app(config=None):
 
     @app.teardown_appcontext
     def shutdown_session(exception=None):
-        app.db_session.remove()
+        if not app.config.get('TESTING'):
+            app.db_session.remove()
 
     os.makedirs(app.instance_path, exist_ok=True)
     os.makedirs(app.config.get('UPLOAD_DIR', 'uploads'), exist_ok=True)

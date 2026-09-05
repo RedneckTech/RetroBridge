@@ -8,6 +8,7 @@ def app():
     from retrobridge.models import Base
     Base.metadata.create_all(bind=app.db_engine)
     yield app
+    app.db_session.remove()
     Base.metadata.drop_all(bind=app.db_engine)
 
 
