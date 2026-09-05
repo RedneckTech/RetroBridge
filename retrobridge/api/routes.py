@@ -305,7 +305,18 @@ def _delete_user_directories(app, user_id):
 @api_bp.route('/jobs/<int:job_id>/events')
 @login_required
 def job_events(job_id):
-    """Server-Sent Events stream for live job status and output updates."""
+    """Server-Sent Events stream for live job status and output updates.
+
+    NOTE: This endpoint holds a response stream open for the duration of the
+    job. When running under a synchronous gunicorn worker, that ties up one
+    worker thread per connected client. Run the app with an async worker class
+    (eventlet/gevent) in production, e.g.:
+
+        gunicorn -k eventlet -w 4 -b 127.0.0.1:5000 wsgi_eventlet:app
+
+    The poll interval and optional maximum connection lifetime are configurable
+    via ``JOB_EVENTS_POLL_INTERVAL`` and ``JOB_EVENTS_MAX_LIFETIME``.
+    """
     from flask import current_app
 
     job, error = jobs_utils.get_job_or_403(current_app.db_session, job_id,
@@ -313,10 +324,20 @@ def job_events(job_id):
     if not job:
         return jsonify({'error': 'Forbidden' if error == 403 else 'Not found'}), error
 
+    poll_interval = current_app.config.get('JOB_EVENTS_POLL_INTERVAL', 1.0)
+    max_lifetime = current_app.config.get('JOB_EVENTS_MAX_LIFETIME')
+
+    # Use eventlet/gevent sleep when available so the greenlet yields instead
+    # of blocking an OS thread.
+    try:
+        from eventlet import sleep as sse_sleep
+    except Exception:
+        sse_sleep = time.sleep
+
     def generate():
         last_status = job.status
         last_output_size = 0
-        poll_interval = 2
+        started_at = time.time()
 
         while True:
             current_app.db_session.refresh(job)
@@ -345,8 +366,12 @@ def job_events(job_id):
                 yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
                 return
 
+            if max_lifetime and (time.time() - started_at) > max_lifetime:
+                yield f"event: done\ndata: {json.dumps({'status': job.status, 'reason': 'timeout'})}\n\n"
+                return
+
             yield f": heartbeat\n\n"
-            time.sleep(poll_interval)
+            sse_sleep(poll_interval)
 
     return Response(
         stream_with_context(generate()),

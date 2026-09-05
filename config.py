@@ -74,6 +74,12 @@ class BaseConfig:
         'default': (0, 60),
     }
 
+    # SSE (job events) tuning. Under a sync gunicorn worker this endpoint
+    # holds a thread for the lifetime of the connection; use an async worker
+    # (eventlet/gevent) in production, or keep the interval short.
+    JOB_EVENTS_POLL_INTERVAL = float(os.environ.get('JOB_EVENTS_POLL_INTERVAL', '1.0'))
+    JOB_EVENTS_MAX_LIFETIME = float(os.environ.get('JOB_EVENTS_MAX_LIFETIME', '0')) or None
+
 
 class DevConfig(BaseConfig):
     DEBUG = True
