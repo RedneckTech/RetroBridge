@@ -274,7 +274,7 @@ def read_output_tail(output_path, tail=None):
         return []
 
 
-def get_device_stats(db_session):
+def get_device_stats(db_session, is_admin=False):
     from retrobridge.models import Device, DevicePort, TerminalSession
     devices = db_session.query(Device).filter_by(is_enabled=True).order_by(Device.name).all()
     stats = []
@@ -288,6 +288,22 @@ def get_device_stats(db_session):
             device_id=d.id, status='queued').count()
         running_count = db_session.query(Job).filter_by(
             device_id=d.id, status='running').count()
+        ports_data = []
+        for p in ports:
+            port_info = {
+                'id': p.id,
+                'label': p.port_label,
+                'purpose': p.purpose,
+                'baud': p.baud,
+                'transport': p.transport or 'serial',
+                'is_enabled': p.is_enabled,
+                'newline_mode': p.newline_mode,
+                'transfer_protocol': p.transfer_protocol,
+            }
+            if is_admin:
+                port_info['pre_cmds'] = p.pre_transfer_cmds
+                port_info['post_cmds'] = p.post_transfer_cmds
+            ports_data.append(port_info)
         stats.append({
             'id': d.id,
             'name': d.name,
@@ -298,16 +314,6 @@ def get_device_stats(db_session):
             'interactive_ports': len(interactive_ports),
             'interactive_available': max(0, len(interactive_ports) - active_sessions),
             'job_ports': len(job_ports),
-            'ports': [{
-                'label': p.port_label,
-                'purpose': p.purpose,
-                'baud': p.baud,
-                'transport': p.transport or 'serial',
-                'is_enabled': p.is_enabled,
-                'pre_cmds': p.pre_transfer_cmds,
-                'post_cmds': p.post_transfer_cmds,
-                'newline_mode': p.newline_mode,
-                'transfer_protocol': p.transfer_protocol,
-            } for p in ports],
+            'ports': ports_data,
         })
     return stats
