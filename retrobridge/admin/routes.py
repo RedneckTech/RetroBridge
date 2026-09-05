@@ -11,6 +11,16 @@ from retrobridge.models import (
 )
 
 
+def _safe_int(value, default=None):
+    """Convert *value* to int, returning *default* if it is missing/invalid."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @admin_bp.route('/')
 @login_required
 @admin_required
@@ -444,8 +454,9 @@ def jobs():
             Job.user.has(username=search)
         )
 
-    if device_filter:
-        query = query.filter_by(device_id=int(device_filter))
+    device_id = _safe_int(device_filter)
+    if device_id is not None:
+        query = query.filter_by(device_id=device_id)
 
     total = query.count()
     jobs_list = query.offset((page - 1) * per_page).limit(per_page).all()
@@ -473,8 +484,11 @@ def bulk_cancel_jobs():
     from flask import current_app
     ids = request.form.getlist('job_ids')
     count = 0
-    for job_id in ids:
-        job = current_app.db_session.get(Job, int(job_id))
+    for raw_id in ids:
+        job_id = _safe_int(raw_id)
+        if job_id is None:
+            continue
+        job = current_app.db_session.get(Job, job_id)
         if not job:
             continue
         if job.status in ('completed', 'failed', 'canceled'):
@@ -585,8 +599,11 @@ def bulk_disconnect():
 
     ids = request.form.getlist('session_ids')
     count = 0
-    for sid in ids:
-        session = current_app.db_session.get(TerminalSession, int(sid))
+    for raw_id in ids:
+        sid = _safe_int(raw_id)
+        if sid is None:
+            continue
+        session = current_app.db_session.get(TerminalSession, sid)
         if session and session.status == 'active':
             from retrobridge.terminal import utils as terminal_utils
             from retrobridge import socketio
@@ -618,25 +635,19 @@ SETTING_MAP = {
     'email_from_name': ('EMAIL_FROM_NAME', str),
 }
 
-def _safe_int(value, default=0):
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
-
 
 def _safe_bool(value):
     return str(value).lower() in ('1', 'true', 'yes', 'on')
 
 
 SETTING_REVERSE = {
-    'MAX_UPLOAD_SIZE_BYTES': lambda v: _safe_int(v) // (1024 * 1024),
-    'DEFAULT_MAX_QUEUED_JOBS': _safe_int,
-    'DEFAULT_MAX_TERMINAL_SESSIONS': _safe_int,
-    'MAX_JOBS_PER_HOUR': _safe_int,
-    'MAX_TERMINAL_SESSION_SECONDS': lambda v: _safe_int(v) // 60,
-    'TERMINAL_IDLE_TIMEOUT_SECONDS': lambda v: _safe_int(v) // 60,
-    'WORKER_POLL_SECONDS': _safe_int,
+    'MAX_UPLOAD_SIZE_BYTES': lambda v: _safe_int(v, 0) // (1024 * 1024),
+    'DEFAULT_MAX_QUEUED_JOBS': lambda v: _safe_int(v, 0),
+    'DEFAULT_MAX_TERMINAL_SESSIONS': lambda v: _safe_int(v, 0),
+    'MAX_JOBS_PER_HOUR': lambda v: _safe_int(v, 0),
+    'MAX_TERMINAL_SESSION_SECONDS': lambda v: _safe_int(v, 0) // 60,
+    'TERMINAL_IDLE_TIMEOUT_SECONDS': lambda v: _safe_int(v, 0) // 60,
+    'WORKER_POLL_SECONDS': lambda v: _safe_int(v, 0),
     'REGISTRATION_OPEN': _safe_bool,
     'MAINTENANCE_MODE': _safe_bool,
     'TERMINAL_SESSION_LOG_ENABLED': _safe_bool,
