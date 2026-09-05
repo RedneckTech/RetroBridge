@@ -1,7 +1,8 @@
 import hashlib
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text,
+    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer,
+    String, Text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -119,6 +120,33 @@ class DevicePort(Base):
     is_enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    __table_args__ = (
+        CheckConstraint(
+            "transport IN ('serial', 'pty', 'tcp', 'telnet', 'rfc2217')",
+            name='ck_device_ports_transport',
+        ),
+        CheckConstraint(
+            "purpose IN ('job_queue', 'interactive')",
+            name='ck_device_ports_purpose',
+        ),
+        CheckConstraint(
+            "parity IN ('N', 'E', 'O', 'M', 'S')",
+            name='ck_device_ports_parity',
+        ),
+        CheckConstraint(
+            "flow_control IN ('none', 'rtscts', 'xonxoff')",
+            name='ck_device_ports_flow_control',
+        ),
+        CheckConstraint(
+            "newline_mode IN ('crlf', 'cr', 'lf')",
+            name='ck_device_ports_newline_mode',
+        ),
+        CheckConstraint(
+            "transfer_protocol IN ('xmodem', 'xmodem1k')",
+            name='ck_device_ports_transfer_protocol',
+        ),
+    )
+
     device = relationship('Device', back_populates='ports')
     jobs = relationship('Job', back_populates='port',
                         cascade='all, delete-orphan')
@@ -160,6 +188,14 @@ class Job(Base):
     __table_args__ = (
         Index('ix_jobs_status_created_at', 'status', 'created_at'),
         Index('ix_jobs_port_status', 'port_id', 'status'),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'canceled')",
+            name='ck_jobs_status',
+        ),
+        CheckConstraint(
+            "override_newline_mode IS NULL OR override_newline_mode IN ('crlf', 'cr', 'lf')",
+            name='ck_jobs_override_newline_mode',
+        ),
     )
 
     user = relationship('User', back_populates='jobs')
@@ -184,6 +220,17 @@ class TerminalSession(Base):
     bridge_worker_id = Column(String(128), nullable=True)
     bridge_heartbeat_at = Column(DateTime, nullable=True)
     bridge_status = Column(String(16), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'disconnected')",
+            name='ck_terminal_sessions_status',
+        ),
+        CheckConstraint(
+            "bridge_status IS NULL OR bridge_status IN ('active', 'suspended')",
+            name='ck_terminal_sessions_bridge_status',
+        ),
+    )
 
     user = relationship('User', back_populates='terminal_sessions')
     device = relationship('Device', back_populates='terminal_sessions')
