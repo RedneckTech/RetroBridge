@@ -3,9 +3,24 @@ from wtforms import (
     BooleanField, IntegerField, PasswordField, SelectField, StringField,
     SubmitField, TextAreaField,
 )
-from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
+import json
+
+from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional, ValidationError
 
 from retrobridge.auth.forms import password_complexity
+
+
+def json_array_field(form, field):
+    """Validate that the field contains either empty/None or a JSON array."""
+    value = (field.data or '').strip()
+    if not value:
+        return
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f'Invalid JSON: {exc}')
+    if not isinstance(parsed, list):
+        raise ValidationError('Must be a JSON array.')
 
 
 class DeviceForm(FlaskForm):
@@ -50,14 +65,16 @@ class DevicePortForm(FlaskForm):
     transfer_protocol = SelectField('Transfer Protocol', choices=[
         ('xmodem', 'XMODEM (128B)'),
         ('xmodem1k', 'XMODEM-1K'),
-        ('ymodem', 'YMODEM'),
-        ('kermit', 'Kermit'),
     ], default='xmodem')
     max_concurrent_jobs = IntegerField('Max Concurrent Jobs', validators=[DataRequired(), NumberRange(min=1)], default=1)
     max_runtime_seconds = IntegerField('Max Runtime (s)', validators=[DataRequired()], default=300)
     idle_timeout_seconds = IntegerField('Idle Timeout (s)', validators=[DataRequired()], default=5)
-    pre_transfer_cmds = TextAreaField('Pre-Transfer Commands (JSON array)', validators=[Optional()])
-    post_transfer_cmds = TextAreaField('Post-Transfer Commands (JSON array)', validators=[Optional()])
+    pre_transfer_cmds = TextAreaField('Pre-Transfer Commands (JSON array)', validators=[
+        Optional(), json_array_field,
+    ])
+    post_transfer_cmds = TextAreaField('Post-Transfer Commands (JSON array)', validators=[
+        Optional(), json_array_field,
+    ])
     is_enabled = BooleanField('Enabled')
     submit = SubmitField('Save Port')
 
