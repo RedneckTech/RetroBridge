@@ -181,6 +181,51 @@ class TestClaimJob:
             session1.close()
             session2.close()
 
+    def test_concurrent_claim_respects_concurrency_limit(self, app):
+        """With max_concurrent_jobs=2 and one running job, only one queued
+        job may be claimed by two racing workers (the second must see the
+        newly incremented running count)."""
+        engine = app.db_engine
+        session1 = Session(bind=engine)
+        session2 = Session(bind=engine)
+
+        try:
+            device = Device(name='cd3', is_enabled=True)
+            session1.add(device)
+            session1.flush()
+            port = DevicePort(
+                device_id=device.id, port_label='C0', dev_path='/dev/ct0',
+                purpose='job_queue', max_concurrent_jobs=2,
+            )
+            session1.add(port)
+            session1.flush()
+
+            user = User(username='cu3', email='c3@example.com', password_hash='h')
+            session1.add(user)
+            session1.flush()
+
+            now = datetime.now(timezone.utc)
+            running = Job(user_id=user.id, device_id=device.id, port_id=port.id,
+                          original_filename='running.bin', status='running',
+                          claimed_by='w1:centurion', claimed_at=now,
+                          lease_expires_at=now + timedelta(seconds=600))
+            job_a = Job(user_id=user.id, device_id=device.id,
+                        original_filename='a.bin', status='queued', priority=0)
+            job_b = Job(user_id=user.id, device_id=device.id,
+                        original_filename='b.bin', status='queued', priority=0)
+            session1.add_all([running, job_a, job_b])
+            session1.commit()
+            session2.commit()
+
+            claimed1 = claim_job(session1, 'cd3')
+            claimed2 = claim_job(session2, 'cd3')
+
+            claims = [c for c in (claimed1, claimed2) if c is not None]
+            assert len(claims) == 1
+        finally:
+            session1.close()
+            session2.close()
+
 
 class TestRecoverStaleJobs:
     def test_expired_lease_reset_to_queued(self, db_session):

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from serial import Serial, SerialException
-from sqlalchemy import create_engine, select as sa_select, update
+from sqlalchemy import create_engine, func, select as sa_select, update
 from sqlalchemy.orm import Session, sessionmaker
 from xmodem import XMODEM, XMODEM1k
 
@@ -302,18 +302,20 @@ def claim_job(session: Session, device_name: str, logger=None) -> Job | None:
 
     try:
         for port in job_ports:
-            running_count = (
-                session.query(Job)
-                .filter_by(port_id=port.id, status='running')
-                .count()
-            )
-            if running_count >= port.max_concurrent_jobs:
-                continue
-
             now = datetime.now(timezone.utc)
             lease_until = now + timedelta(seconds=JOB_LEASE_SECONDS)
             wid = _worker_id(device_name)
 
+            # Atomic claim with an inline concurrency guard: only consider a
+            # queued job if the number of currently running jobs on this port
+            # is below max_concurrent_jobs. This prevents two workers from
+            # both claiming past the limit after seeing the same pre-check
+            # running count.
+            running_count_subq = (
+                sa_select(func.count(Job.id))
+                .where(Job.port_id == port.id, Job.status == 'running')
+                .scalar_subquery()
+            )
             result = session.execute(
                 update(Job)
                 .where(
@@ -323,6 +325,7 @@ def claim_job(session: Session, device_name: str, logger=None) -> Job | None:
                             Job.device_id == device.id,
                             Job.status == 'queued',
                             Job.cancel_requested.is_(False),
+                            running_count_subq < port.max_concurrent_jobs,
                         )
                         .order_by(Job.priority.desc(), Job.created_at.asc())
                         .limit(1)
