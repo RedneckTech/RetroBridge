@@ -181,6 +181,9 @@ class TerminalSession(Base):
     bytes_sent = Column(Integer, default=0)
     bytes_received = Column(Integer, default=0)
     disconnect_reason = Column(String(64), nullable=True)
+    bridge_worker_id = Column(String(128), nullable=True)
+    bridge_heartbeat_at = Column(DateTime, nullable=True)
+    bridge_status = Column(String(16), nullable=True)
 
     user = relationship('User', back_populates='terminal_sessions')
     device = relationship('Device', back_populates='terminal_sessions')

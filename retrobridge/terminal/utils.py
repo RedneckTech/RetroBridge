@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from serial import Serial, SerialException
 from sqlalchemy import delete, update
+from sqlalchemy.orm import Session
 
 from retrobridge.models import PortLease, TerminalSession
 from retrobridge.transport import open_transport, transport_uses_baud
@@ -33,10 +34,84 @@ _suspended_bridges = {}
 _lock = threading.Lock()
 GRACE_PERIOD = 600
 TERMINAL_LEASE_SECONDS = 300
+BRIDGE_HEARTBEAT_SECONDS = 10
+BRIDGE_HEARTBEAT_STALE_SECONDS = 30
 
 
 def _terminal_worker_id():
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+# ---------------------------------------------------------------------------
+# Shared bridge registry (database-backed, cross-worker safe)
+# ---------------------------------------------------------------------------
+
+def _update_bridge_registry(db_session, session_id, status=None):
+    """Record that this worker owns the bridge for the given session."""
+    now = datetime.now(timezone.utc)
+    try:
+        db_session.execute(
+            update(TerminalSession)
+            .where(TerminalSession.id == session_id)
+            .values(
+                bridge_worker_id=_terminal_worker_id(),
+                bridge_heartbeat_at=now,
+                bridge_status=status,
+            )
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        logger.exception('Failed to update bridge registry for session %s', session_id)
+
+
+def _clear_bridge_registry(db_session, session_id):
+    """Remove this worker's ownership record for the session."""
+    try:
+        db_session.execute(
+            update(TerminalSession)
+            .where(TerminalSession.id == session_id)
+            .values(
+                bridge_worker_id=None,
+                bridge_heartbeat_at=None,
+                bridge_status=None,
+            )
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        logger.exception('Failed to clear bridge registry for session %s', session_id)
+
+
+def get_bridge_registry(db_session, session_id):
+    """Return the bridge registry row for a session, or None."""
+    session = db_session.get(TerminalSession, session_id)
+    if not session or not session.bridge_worker_id:
+        return None
+    return {
+        'worker_id': session.bridge_worker_id,
+        'heartbeat_at': session.bridge_heartbeat_at,
+        'status': session.bridge_status,
+    }
+
+
+def is_bridge_active_remotely(db_session, session_id):
+    """Return True if another worker owns an active bridge for this session."""
+    reg = get_bridge_registry(db_session, session_id)
+    if not reg:
+        return False
+    if reg['worker_id'] == _terminal_worker_id():
+        return False
+    heartbeat = reg['heartbeat_at']
+    if heartbeat is None:
+        return False
+    if heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    return (
+        reg['status'] in ('active', 'suspended')
+        and (datetime.now(timezone.utc) - heartbeat).total_seconds()
+        < BRIDGE_HEARTBEAT_STALE_SECONDS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +290,9 @@ def end_session(db_session, session_id, reason='user_disconnect'):
         session.status = 'disconnected'
         session.disconnect_reason = reason
         session.disconnected_at = now
+        session.bridge_worker_id = None
+        session.bridge_heartbeat_at = None
+        session.bridge_status = None
         if session.connected_at:
             connected = session.connected_at
             if connected.tzinfo is None:
@@ -227,12 +305,71 @@ def end_session(db_session, session_id, reason='user_disconnect'):
     db_session.commit()
 
 
+def _heartbeat_bridge_in_thread(bridge):
+    """Update the DB heartbeat for a bridge running in a background thread."""
+    engine = bridge.get('db_engine')
+    if not engine:
+        return
+    session_id = bridge['session_id']
+    try:
+        with Session(bind=engine) as db_session:
+            db_session.execute(
+                update(TerminalSession)
+                .where(
+                    TerminalSession.id == session_id,
+                    TerminalSession.bridge_worker_id == _terminal_worker_id(),
+                )
+                .values(bridge_heartbeat_at=datetime.now(timezone.utc))
+            )
+            db_session.commit()
+    except Exception:
+        logger.exception('Bridge heartbeat failed for session %s', session_id)
+
+
+def _session_still_active_in_db(bridge):
+    """Return False if the session has been marked disconnected or taken
+    over by another worker (e.g. admin force-disconnect from another process)."""
+    engine = bridge.get('db_engine')
+    if not engine:
+        return True
+    session_id = bridge['session_id']
+    try:
+        with Session(bind=engine) as db_session:
+            session = db_session.get(TerminalSession, session_id)
+            if not session:
+                return False
+            if session.status != 'active':
+                return False
+            if (
+                session.bridge_worker_id
+                and session.bridge_worker_id != _terminal_worker_id()
+            ):
+                return False
+            return True
+    except Exception:
+        logger.exception('Failed to check session status for %s', session_id)
+        return True
+
+
 def _serial_reader(socketio, ser, session_id):
+    last_heartbeat = 0
     while True:
         with _lock:
             bridge = _get_bridge_by_session(session_id)
         if not bridge or not bridge['running']:
             break
+
+        # Periodic cross-worker status check and heartbeat.
+        now = time.time()
+        if now - last_heartbeat >= BRIDGE_HEARTBEAT_SECONDS:
+            if not _session_still_active_in_db(bridge):
+                logger.info('Session %s was closed remotely; stopping bridge', session_id)
+                bridge['running'] = False
+                _close_bridge_resources(bridge)
+                _remove_bridge_by_session(session_id)
+                break
+            _heartbeat_bridge_in_thread(bridge)
+            last_heartbeat = now
 
         current_sid = bridge.get('sid')
         try:
@@ -291,66 +428,78 @@ def _remove_bridge_by_session(session_id):
     return False
 
 
-def start_bridge(socketio, sid, session, port):
+def start_bridge(socketio, sid, session, port, db_session=None):
     with _lock:
         if sid in _active_bridges:
             return False
 
-        try:
-            ser = open_transport(port)
-            # Disable local echo on the PTY slave to prevent feedback loops
-            if (port.transport or 'serial') in ('serial', 'pty'):
-                try:
-                    import termios
-                    fd = ser.fileno() if hasattr(ser, 'fileno') else ser.fd
-                    attrs = termios.tcgetattr(fd)
-                    attrs[3] = attrs[3] & ~termios.ECHO
-                    termios.tcsetattr(fd, termios.TCSANOW, attrs)
-                except Exception:
-                    pass
-        except SerialException as e:
-            logger.error(f'Cannot open {port.transport or "serial"} port {port.dev_path}: {e}')
-            return False
+    if db_session is None:
+        db_session = _resolve_db_session()
 
-        bridge = {
-            'serial': ser,
-            'thread': None,
-            'sid': sid,
-            'session_id': session.id,
-            'port_id': port.id,
-            'device_id': port.device_id,
-            'running': True,
-            'bytes_sent': 0,
-            'bytes_received': 0,
-            'output_buffer': '',
-            'last_activity': time.time(),
-            'start_time': time.time(),
-            'max_runtime': port.max_runtime_seconds or 3600,
-            'idle_timeout': port.idle_timeout_seconds or 300,
-            'log_file': None,
-        }
+    # If another worker already owns this bridge, refuse to start a second one.
+    if is_bridge_active_remotely(db_session, session.id):
+        logger.warning('Session %s is already bridged on another worker', session.id)
+        return False
 
-        if _session_logging_enabled():
+    try:
+        ser = open_transport(port)
+        # Disable local echo on the PTY slave to prevent feedback loops
+        if (port.transport or 'serial') in ('serial', 'pty'):
             try:
-                log_path = _session_log_path(session.id)
-                bridge['log_file'] = open(log_path, 'a', encoding='utf-8', errors='replace')
-                msg = f'Session #{session.id} started on {port.dev_path}'
-                _log_line(bridge['log_file'], msg, 'SYS')
-            except Exception as e:
-                logger.warning(f'Could not open session log: {e}')
+                import termios
+                fd = ser.fileno() if hasattr(ser, 'fileno') else ser.fd
+                attrs = termios.tcgetattr(fd)
+                attrs[3] = attrs[3] & ~termios.ECHO
+                termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            except Exception:
+                pass
+    except SerialException as e:
+        logger.error(f'Cannot open {port.transport or "serial"} port {port.dev_path}: {e}')
+        return False
 
-        thread = threading.Thread(
-            target=_serial_reader,
-            args=(socketio, ser, session.id),
-            daemon=True,
-        )
-        bridge['thread'] = thread
+    bridge = {
+        'serial': ser,
+        'thread': None,
+        'sid': sid,
+        'session_id': session.id,
+        'port_id': port.id,
+        'device_id': port.device_id,
+        'running': True,
+        'bytes_sent': 0,
+        'bytes_received': 0,
+        'output_buffer': '',
+        'last_activity': time.time(),
+        'start_time': time.time(),
+        'max_runtime': port.max_runtime_seconds or 3600,
+        'idle_timeout': port.idle_timeout_seconds or 300,
+        'log_file': None,
+        'db_engine': _resolve_db_engine(),
+    }
+
+    if _session_logging_enabled():
+        try:
+            log_path = _session_log_path(session.id)
+            bridge['log_file'] = open(log_path, 'a', encoding='utf-8', errors='replace')
+            msg = f'Session #{session.id} started on {port.dev_path}'
+            _log_line(bridge['log_file'], msg, 'SYS')
+        except Exception as e:
+            logger.warning(f'Could not open session log: {e}')
+
+    _update_bridge_registry(db_session, session.id, status='active')
+
+    thread = threading.Thread(
+        target=_serial_reader,
+        args=(socketio, ser, session.id),
+        daemon=True,
+    )
+    bridge['thread'] = thread
+    with _lock:
         _active_bridges[sid] = bridge
-        thread.start()
-        return True
+    thread.start()
+    return True
 
 
-def suspend_bridge(socketio, sid):
+def suspend_bridge(socketio, sid, db_session=None):
     with _lock:
         bridge = _active_bridges.pop(sid, None)
         if not bridge:
@@ -358,19 +507,41 @@ def suspend_bridge(socketio, sid):
         bridge['running'] = True
         bridge['suspended_at'] = time.time()
         bridge['sid'] = None
-        _suspended_bridges[bridge['session_id']] = bridge
-        return True
+        session_id = bridge['session_id']
+        _suspended_bridges[session_id] = bridge
+
+    if db_session is None:
+        try:
+            db_session = _resolve_db_session()
+        except Exception:
+            logger.exception('No DB session available to update bridge registry')
+            return True
+    _update_bridge_registry(db_session, session_id, status='suspended')
+    return True
 
 
-def resume_bridge(socketio, new_sid, session_id):
+def resume_bridge(socketio, new_sid, session_id, db_session=None):
     with _lock:
         bridge = _suspended_bridges.pop(session_id, None)
         if not bridge:
             return None
+
+    if db_session is None:
+        db_session = _resolve_db_session()
+
+    # If another worker owns this bridge, it cannot be resumed here because the
+    # serial connection lives in that process.
+    if is_bridge_active_remotely(db_session, session_id):
+        logger.warning('Session %s is bridged on another worker; cannot resume locally', session_id)
+        # Put the bridge back so the local suspended state is preserved.
+        with _lock:
+            _suspended_bridges[session_id] = bridge
+        return None
+
+    with _lock:
         if bridge.get('suspended_at') and time.time() - bridge['suspended_at'] > GRACE_PERIOD:
             bridge['running'] = False
             _close_bridge_resources(bridge)
-            db_session = _resolve_db_session()
             end_session(db_session, session_id, reason='user_disconnect')
             return None
         bridge['sid'] = new_sid
@@ -382,21 +553,23 @@ def resume_bridge(socketio, new_sid, session_id):
         if suspended_at:
             bridge['start_time'] += now_ts - suspended_at
         _active_bridges[new_sid] = bridge
-        try:
-            if bridge.get('output_buffer'):
-                socketio.emit('terminal_output', {'data': bridge['output_buffer']},
+
+    _update_bridge_registry(db_session, session_id, status='active')
+    try:
+        if bridge.get('output_buffer'):
+            socketio.emit('terminal_output', {'data': bridge['output_buffer']},
+                          namespace='/terminal', to=new_sid)
+        ser = bridge.get('serial')
+        if ser and ser.is_open and ser.in_waiting:
+            buffered = ser.read(ser.in_waiting)
+            if buffered:
+                decoded = buffered.decode('utf-8', errors='replace')
+                bridge['bytes_received'] += len(buffered)
+                socketio.emit('terminal_output', {'data': decoded},
                               namespace='/terminal', to=new_sid)
-            ser = bridge.get('serial')
-            if ser and ser.is_open and ser.in_waiting:
-                buffered = ser.read(ser.in_waiting)
-                if buffered:
-                    decoded = buffered.decode('utf-8', errors='replace')
-                    bridge['bytes_received'] += len(buffered)
-                    socketio.emit('terminal_output', {'data': decoded},
-                                  namespace='/terminal', to=new_sid)
-        except Exception:
-            pass
-        return bridge
+    except Exception:
+        pass
+    return bridge
 
 
 def _close_bridge_resources(bridge):
@@ -419,6 +592,11 @@ def _resolve_db_session():
     return current_app.db_session
 
 
+def _resolve_db_engine():
+    from flask import current_app
+    return current_app.db_engine
+
+
 def cleanup_suspended():
     now = time.time()
     with _lock:
@@ -426,13 +604,15 @@ def cleanup_suspended():
         for sid, bridge in list(_suspended_bridges.items()):
             if bridge.get('suspended_at') and now - bridge['suspended_at'] > GRACE_PERIOD:
                 expired.append(sid)
+    if not expired:
+        return
+    db_session = _resolve_db_session()
     for sid in expired:
         bridge = _suspended_bridges.pop(sid, None)
         if not bridge:
             continue
         bridge['running'] = False
         _close_bridge_resources(bridge)
-        db_session = _resolve_db_session()
         end_session(db_session, sid, reason='user_disconnect')
 
 
@@ -460,6 +640,8 @@ def start_suspended_cleaner(socketio):
 def stop_bridge(socketio, sid, reason='user_disconnect', db_session=None):
     with _lock:
         bridge = _active_bridges.pop(sid, None)
+        if not bridge:
+            bridge = _suspended_bridges.pop(sid, None)
 
     if not bridge:
         return
@@ -525,8 +707,10 @@ def force_disconnect_session(socketio, session_id, db_session=None):
         from flask import current_app
         db_session = current_app.db_session
 
+    # No local bridge: mark the session/lease disconnected so the worker that
+    # actually holds the bridge will see the change and tear down.
     end_session(db_session, session_id, reason='admin_force')
-    return False
+    return True
 
 
 def write_to_serial(sid, data):

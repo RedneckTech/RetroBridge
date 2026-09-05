@@ -353,7 +353,8 @@ class TestResumeBridge:
             'serial': MagicMock(is_open=False),
         }
 
-        bridge = utils.resume_bridge(socketio, 'new_sid', session_id)
+        db_session = MagicMock()
+        bridge = utils.resume_bridge(socketio, 'new_sid', session_id, db_session=db_session)
         assert bridge is not None
         assert bridge['last_activity'] >= now
         assert 'suspended_at' not in bridge
