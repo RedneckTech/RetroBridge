@@ -1,5 +1,6 @@
 """Unit tests for terminal serial bridge utilities."""
 import time
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
 import pytest
@@ -240,3 +241,144 @@ class TestCheckTimeouts:
         }
         utils.check_timeouts(socketio, db_session=mock_db)
         assert 'sid1' not in utils._active_bridges
+
+
+class TestRecoverStaleLeases:
+    def setup_method(self):
+        utils._active_bridges.clear()
+        utils._suspended_bridges.clear()
+
+    def test_skips_sessions_with_local_active_bridge(self, db_session):
+        user = User(username='testuser', email='test@example.com',
+                    password_hash='hash')
+        device = Device(name='centurion')
+        port = DevicePort(
+            device_id=0, port_label='TTY1', dev_path='/dev/tty1',
+            purpose='interactive',
+        )
+        db_session.add(device)
+        db_session.flush()
+        port.device_id = device.id
+        db_session.add_all([user, port])
+        db_session.commit()
+
+        session = TerminalSession(
+            user_id=user.id, device_id=device.id, port_id=port.id,
+            status='active',
+        )
+        db_session.add(session)
+        db_session.commit()
+
+        from retrobridge.models import PortLease
+        lease = PortLease(
+            port_id=port.id,
+            session_id=session.id,
+            claimed_by='test-worker',
+            claimed_at=datetime.now(timezone.utc),
+            lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+            heartbeat_at=datetime.now(timezone.utc),
+        )
+        db_session.add(lease)
+        db_session.commit()
+
+        utils._active_bridges['sid'] = {
+            'session_id': session.id,
+            'running': True,
+        }
+
+        utils.recover_stale_leases(db_session)
+
+        db_session.refresh(session)
+        assert session.status == 'active'
+        assert db_session.get(PortLease, lease.id) is None
+
+    def test_disconnects_expired_lease_without_local_bridge(self, db_session):
+        user = User(username='testuser', email='test@example.com',
+                    password_hash='hash')
+        device = Device(name='centurion')
+        port = DevicePort(
+            device_id=0, port_label='TTY1', dev_path='/dev/tty1',
+            purpose='interactive',
+        )
+        db_session.add(device)
+        db_session.flush()
+        port.device_id = device.id
+        db_session.add_all([user, port])
+        db_session.commit()
+
+        session = TerminalSession(
+            user_id=user.id, device_id=device.id, port_id=port.id,
+            status='active',
+        )
+        db_session.add(session)
+        db_session.commit()
+
+        from retrobridge.models import PortLease
+        lease = PortLease(
+            port_id=port.id,
+            session_id=session.id,
+            claimed_by='test-worker',
+            claimed_at=datetime.now(timezone.utc),
+            lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+            heartbeat_at=datetime.now(timezone.utc),
+        )
+        db_session.add(lease)
+        db_session.commit()
+
+        utils.recover_stale_leases(db_session)
+
+        db_session.refresh(session)
+        assert session.status == 'disconnected'
+        assert session.disconnect_reason == 'lease_expired'
+        assert db_session.get(PortLease, lease.id) is None
+
+
+class TestResumeBridge:
+    def setup_method(self):
+        utils._active_bridges.clear()
+        utils._suspended_bridges.clear()
+
+    def test_resets_last_activity(self):
+        socketio = MagicMock()
+        session_id = 1
+        now = time.time()
+        utils._suspended_bridges[session_id] = {
+            'session_id': session_id,
+            'running': True,
+            'sid': None,
+            'suspended_at': now - 100,
+            'start_time': now - 200,
+            'last_activity': now - 150,
+            'output_buffer': '',
+            'serial': MagicMock(is_open=False),
+        }
+
+        bridge = utils.resume_bridge(socketio, 'new_sid', session_id)
+        assert bridge is not None
+        assert bridge['last_activity'] >= now
+        assert 'suspended_at' not in bridge
+        assert bridge['start_time'] > now - 200
+
+
+class TestForceDisconnectSession:
+    def setup_method(self):
+        utils._active_bridges.clear()
+        utils._suspended_bridges.clear()
+
+    def test_disconnects_suspended_bridge(self):
+        socketio = MagicMock()
+        session_id = 1
+        ser = MagicMock()
+        ser.is_open = True
+        utils._suspended_bridges[session_id] = {
+            'session_id': session_id,
+            'running': True,
+            'serial': ser,
+            'log_file': None,
+        }
+
+        db = MagicMock()
+        result = utils.force_disconnect_session(socketio, session_id, db_session=db)
+        assert result is True
+        assert session_id not in utils._suspended_bridges
+        ser.close.assert_called_once()

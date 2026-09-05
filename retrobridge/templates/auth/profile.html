@@ -69,7 +69,7 @@
                     <form method="POST" action="{{ url_for('auth.patreon_unlink') }}" class="d-inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-secondary btn-sm"
-                                onclick="return confirm('Unlink your Patreon account?')">
+                                data-confirm="Unlink your Patreon account?">
                             Unlink
                         </button>
                     </form>

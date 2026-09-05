@@ -19,6 +19,29 @@ document.addEventListener('DOMContentLoaded', function () {
     if (dashboardEl) {
         initDashboardSSE();
     }
+
+    // Generic confirmation handler for buttons and forms
+    document.querySelectorAll('[data-confirm]').forEach(function (el) {
+        var message = el.dataset.confirm;
+        if (!message) return;
+        el.addEventListener('click', function (e) {
+            if (!confirm(message)) {
+                e.preventDefault();
+                return false;
+            }
+        });
+    });
+
+    document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+        var message = form.dataset.confirm;
+        if (!message) return;
+        form.addEventListener('submit', function (e) {
+            if (!confirm(message)) {
+                e.preventDefault();
+                return false;
+            }
+        });
+    });
 });
 
 function initJobSSE(jobId, initialStatus) {

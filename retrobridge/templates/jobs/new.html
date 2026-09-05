@@ -59,13 +59,13 @@
 
 {# ── Device Cards ────────────────────────────────────────────────────────── #}
 <h5>Select Target Device</h5>
-<div class="row mb-3" id="device-cards">
+<div class="row mb-3" id="device-cards"
+     data-devices='{{ device_stats|tojson }}'
+     data-max-upload-bytes="{{ max_upload_bytes }}">
     {% for d in device_stats %}
     <div class="col-md-6 col-lg-4 mb-2">
         <div class="card device-card {{ 'busy' if d.queue_count > 3 }}"
-             data-device-id="{{ d.id }}"
-             data-device-name="{{ d.display_name }}"
-             onclick="selectDevice(this, {{ d.id }})">
+             data-device-id="{{ d.id }}">
             <div class="card-body py-3 px-3">
                 <div class="d-flex justify-content-between align-items-start">
                     <div>
@@ -133,7 +133,7 @@
     {# ── Drag & Drop Upload ──────────────────────────────────────────────── #}
     <div class="mb-3">
         <label class="form-label fw-bold">Program File</label>
-        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="drop-zone" id="drop-zone">
             <div id="drop-placeholder">
                 <div style="font-size: 2rem;">📁</div>
                 <p class="mb-1 mt-2">Drop your file here or <strong>browse</strong></p>
@@ -143,7 +143,7 @@
                 <div style="font-size: 2rem;">📄</div>
                 <p class="mb-1 mt-2"><strong id="file-name"></strong></p>
                 <small class="text-muted" id="file-size"></small>
-                <br><a href="#" class="small" onclick="event.stopPropagation(); clearFile(); return false;">Remove</a>
+                <br><a href="#" class="small" data-action="clear-file">Remove</a>
             </div>
         </div>
         {{ form.file(id='file-input', class='d-none', accept='.bin,.hex,.obj,.asm,.s,.txt') }}
@@ -159,8 +159,7 @@
             <span class="small text-muted">Low</span>
             <input type="range" class="form-range flex-grow-1" name="priority"
                    min="0" max="9" value="{{ form.priority.data or 0 }}"
-                   id="priority-slider"
-                   oninput="document.getElementById('priority-val').textContent = this.value">
+                   id="priority-slider">
             <span class="small text-muted">High</span>
             <span class="badge bg-primary" id="priority-val">{{ form.priority.data or 0 }}</span>
         </div>
@@ -214,7 +213,7 @@
                         </span>
                     </div>
                     <button type="button" class="btn btn-sm btn-outline-info"
-                            onclick="loadLastJob({{ last_job.device_id }})">
+                            id="re-submit-btn" data-device-id="{{ last_job.device_id }}">
                         Re-submit
                     </button>
                 </div>
@@ -233,116 +232,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-const ALLOWED_EXTS = ['bin','hex','obj','asm','s','txt'];
-const deviceStats = {{ device_stats|tojson }};
-
-function maxUploadBytes() {
-    return {{ max_upload_bytes }};
-}
-
-// ── Device selection ────────────────────────────────────────────────────────
-window.selectDevice = function(card, deviceId) {
-    document.querySelectorAll('.device-card').forEach(c => c.classList.remove('selected'));
-    card.classList.add('selected');
-    document.getElementById('device-id-input').value = deviceId;
-
-    var info = document.getElementById('device-info');
-    info.classList.remove('d-none');
-
-    var ds = deviceStats.find(function(d) { return d.id === deviceId; });
-    if (!ds) return;
-
-    var jobPort = (ds.ports || []).find(function(p) { return p.purpose === 'job_queue'; });
-    document.getElementById('info-protocol').textContent = (jobPort && jobPort.transfer_protocol) || 'xmodem';
-    document.getElementById('info-newline').textContent = (jobPort && jobPort.newline_mode) || 'crlf';
-    document.getElementById('info-queue-pos').textContent = ds.queue_count + ' ahead of you';
-
-    var preCmds = (jobPort && jobPort.pre_cmds) || '';
-    var postCmds = (jobPort && jobPort.post_cmds) || '';
-
-    var preDiv = document.getElementById('info-pre-cmds');
-    var postDiv = document.getElementById('info-post-cmds');
-    if (preCmds) {
-        preDiv.classList.remove('d-none');
-        try { preCmds = JSON.stringify(JSON.parse(preCmds), null, 2); } catch(e) {}
-        document.getElementById('info-pre-text').textContent = preCmds;
-    } else { preDiv.classList.add('d-none'); }
-
-    if (postCmds) {
-        postDiv.classList.remove('d-none');
-        try { postCmds = JSON.stringify(JSON.parse(postCmds), null, 2); } catch(e) {}
-        document.getElementById('info-post-text').textContent = postCmds;
-    } else { postDiv.classList.add('d-none'); }
-};
-
-// ── Drag & drop ─────────────────────────────────────────────────────────────
-var dropZone = document.getElementById('drop-zone');
-var fileInput = document.getElementById('file-input');
-
-['dragenter','dragover'].forEach(function(evt) {
-    dropZone.addEventListener(evt, function(e) { e.preventDefault(); dropZone.classList.add('drag-over'); });
-});
-['dragleave','drop'].forEach(function(evt) {
-    dropZone.addEventListener(evt, function(e) { e.preventDefault(); dropZone.classList.remove('drag-over'); });
-});
-
-dropZone.addEventListener('drop', function(e) {
-    var files = e.dataTransfer.files;
-    if (files.length) setFile(files[0]);
-});
-
-fileInput.addEventListener('change', function() {
-    if (this.files.length) setFile(this.files[0]);
-});
-
-function setFile(file) {
-    var ext = file.name.split('.').pop().toLowerCase();
-    if (ALLOWED_EXTS.indexOf(ext) === -1) {
-        alert('Invalid file type: .' + ext + '\nAllowed: .bin, .hex, .obj, .asm, .s, .txt');
-        return;
-    }
-    if (file.size > maxUploadBytes()) {
-        alert('File is too large (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). Maximum is ' + (maxUploadBytes() / 1024 / 1024) + ' MB.');
-        return;
-    }
-    var dt = new DataTransfer();
-    dt.items.add(file);
-    fileInput.files = dt.files;
-
-    document.getElementById('drop-placeholder').classList.add('d-none');
-    document.getElementById('file-selected').classList.remove('d-none');
-    dropZone.classList.add('has-file');
-    document.getElementById('file-name').textContent = file.name;
-    document.getElementById('file-size').textContent = (file.size / 1024).toFixed(1) + ' KB';
-}
-
-window.clearFile = function() {
-    fileInput.value = '';
-    document.getElementById('drop-placeholder').classList.remove('d-none');
-    document.getElementById('file-selected').classList.add('d-none');
-    dropZone.classList.remove('has-file');
-};
-
-// ── Last job re-submit ──────────────────────────────────────────────────────
-window.loadLastJob = function(deviceId) {
-    var card = document.querySelector('.device-card[data-device-id="' + deviceId + '"]');
-    if (card) selectDevice(card, deviceId);
-};
-
-// ── Form validation before submit ───────────────────────────────────────────
-document.getElementById('upload-form').addEventListener('submit', function(e) {
-    var deviceId = document.getElementById('device-id-input').value;
-    if (!deviceId) {
-        e.preventDefault();
-        alert('Please select a target device.');
-        return;
-    }
-    if (!fileInput.files.length) {
-        e.preventDefault();
-        alert('Please select a file to upload.');
-        return;
-    }
-});
-</script>
+<script src="{{ url_for('static', filename='js/new-job.js') }}"></script>
 {% endblock %}

@@ -46,6 +46,49 @@ LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 JOB_LEASE_SECONDS = 300
 JOB_HEARTBEAT_INTERVAL = 30
 
+_NEWLINE_SEQUENCES = {'cr': '\r', 'lf': '\n', 'crlf': '\r\n'}
+
+
+def _resolve_newline_mode(job, port):
+    """Return the newline mode to use, preferring job-level overrides."""
+    return job.override_newline_mode or port.newline_mode or 'crlf'
+
+
+def _resolve_cmds(job, port, kind):
+    """Return the pre/post transfer command list, preferring job overrides."""
+    if kind == 'pre':
+        raw = job.override_pre_transfer_cmds or port.pre_transfer_cmds
+    elif kind == 'post':
+        raw = job.override_post_transfer_cmds or port.post_transfer_cmds
+    else:
+        raise ValueError(f'Unknown command kind: {kind!r}')
+
+    if not raw:
+        return []
+
+    try:
+        cmds = json.loads(raw)
+    except json.JSONDecodeError:
+        cmds = [raw]
+
+    if isinstance(cmds, str):
+        cmds = [cmds]
+    return cmds or []
+
+
+def _apply_newline(cmd, mode):
+    """Ensure *cmd* ends with the configured newline sequence.
+
+    If the command already ends with a recognised line ending it is left
+    untouched so that explicit endings (e.g. ``\\r``) are preserved.
+    """
+    if not cmd:
+        return cmd
+    if cmd.endswith('\r\n') or cmd.endswith('\r') or cmd.endswith('\n'):
+        return cmd
+    newline = _NEWLINE_SEQUENCES.get(mode, '\r\n')
+    return cmd + newline
+
 
 def build_engine():
     db_uri = config.get_database_uri()
@@ -381,14 +424,11 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                 pass
 
             # Execute pre-transfer commands (no drain between cmd and XMODEM)
-            pre_cmds = []
-            if port.pre_transfer_cmds:
-                try:
-                    pre_cmds = json.loads(port.pre_transfer_cmds)
-                except json.JSONDecodeError:
-                    pre_cmds = [port.pre_transfer_cmds]
+            newline_mode = _resolve_newline_mode(job, port)
+            pre_cmds = _resolve_cmds(job, port, 'pre')
 
             for cmd in pre_cmds:
+                cmd = _apply_newline(cmd, newline_mode)
                 logger.info(f'Sending pre-transfer command: {repr(cmd)}')
                 _fd_write(ser.fd, cmd.encode('utf-8', errors='replace'))
                 _log_line(cmd, 'TX')
@@ -434,14 +474,10 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
             logger.info('XMODEM transfer complete')
 
             # Execute post-transfer commands
-            post_cmds = []
-            if port.post_transfer_cmds:
-                try:
-                    post_cmds = json.loads(port.post_transfer_cmds)
-                except json.JSONDecodeError:
-                    post_cmds = [port.post_transfer_cmds]
+            post_cmds = _resolve_cmds(job, port, 'post')
 
             for cmd in post_cmds:
+                cmd = _apply_newline(cmd, newline_mode)
                 logger.info(f'Sending post-transfer command: {repr(cmd)}')
                 _fd_write(ser.fd, cmd.encode('utf-8', errors='replace'))
                 _log_line(cmd, 'TX')

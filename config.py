@@ -88,6 +88,8 @@ class DevConfig(BaseConfig):
         'Referrer-Policy': 'strict-origin-when-cross-origin',
     }
     RATE_LIMIT_ENABLED = False
+    RATE_LIMIT_STORE = 'memory'
+    TRUSTED_PROXIES = []
 
 
 class TestConfig(BaseConfig):
@@ -98,6 +100,8 @@ class TestConfig(BaseConfig):
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     SQLALCHEMY_ENGINE_POOLCLASS = 'StaticPool'
     WTF_CSRF_ENABLED = False
+    RATE_LIMIT_STORE = 'memory'
+    TRUSTED_PROXIES = []
 
 
 class ProdConfig(BaseConfig):
@@ -133,6 +137,8 @@ class ProdConfig(BaseConfig):
         ),
     }
     RATE_LIMIT_ENABLED = True
+    RATE_LIMIT_STORE = 'sqlite'
+    TRUSTED_PROXIES = []
     RATE_LIMITS = {
         'health': (60, 60),
         'auth': (10, 60),

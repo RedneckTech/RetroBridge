@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text,
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -148,6 +148,11 @@ class Job(Base):
     override_pre_transfer_cmds = Column(Text, nullable=True)
     override_post_transfer_cmds = Column(Text, nullable=True)
     cancel_requested = Column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        Index('ix_jobs_status_created_at', 'status', 'created_at'),
+        Index('ix_jobs_port_status', 'port_id', 'status'),
+    )
 
     user = relationship('User', back_populates='jobs')
     device = relationship('Device', back_populates='jobs')
