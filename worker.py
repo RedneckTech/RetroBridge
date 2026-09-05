@@ -180,16 +180,19 @@ class JobCancelledError(Exception):
     """Raised when a job is cancelled mid-transfer."""
 
 
-def _check_job_cancelled(job, session_factory):
-    """Re-read job from DB; raise if cancel_requested or status is canceled."""
-    if session_factory:
-        s = session_factory()
-        try:
-            j = s.get(Job, job.id)
-            if j and (j.cancel_requested or j.status == 'canceled'):
-                raise JobCancelledError("job was cancelled")
-        finally:
-            s.close()
+def _check_job_cancelled(job, session=None):
+    """Re-read job from DB; raise if cancel_requested or status is canceled.
+
+    When a session is provided it is reused; otherwise a new session is
+    created and closed for each call.
+    """
+    if session is None:
+        return
+    j = session.get(Job, job.id)
+    if j:
+        session.refresh(j)
+        if j.cancel_requested or j.status == 'canceled':
+            raise JobCancelledError("job was cancelled")
 
 
 def _worker_id(device_name):
@@ -392,9 +395,10 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
 
     serial_params = get_serial_params(port)
     ser = None
+    transfer_session = session_factory() if session_factory else None
 
     try:
-        _check_job_cancelled(job, session_factory)
+        _check_job_cancelled(job, transfer_session)
 
         transport = (port.transport or 'serial')
         if transport_uses_baud(port):
@@ -444,13 +448,22 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
             logger.info(f'Starting XMODEM transfer of {upload_file}')
             _log_line(f'Starting XMODEM transfer: {job.original_filename}', 'SYS')
 
+            cancel_check_counter = [0]
+
+            def _maybe_check_cancelled():
+                # Check cancellation every 16 calls to avoid one DB round-trip
+                # per byte/block while still responding promptly to cancel.
+                cancel_check_counter[0] += 1
+                if cancel_check_counter[0] % 16 == 0:
+                    _check_job_cancelled(job, transfer_session)
+
             def getc(size, timeout=1):
-                _check_job_cancelled(job, session_factory)
+                _maybe_check_cancelled()
                 data = _fd_read(ser.fd, size, timeout)
                 return data if data else None
 
             def putc(data, timeout=1):
-                _check_job_cancelled(job, session_factory)
+                _maybe_check_cancelled()
                 return _fd_write(ser.fd, data)
 
             proto = port.transfer_protocol or 'xmodem'
@@ -510,7 +523,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                     last_heartbeat = elapsed
 
                 try:
-                    _check_job_cancelled(job, session_factory)
+                    _check_job_cancelled(job, transfer_session)
                 except JobCancelledError:
                     break
 
@@ -531,7 +544,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                     time.sleep(0.1)
 
             try:
-                _check_job_cancelled(job, session_factory)
+                _check_job_cancelled(job, transfer_session)
                 job.status = 'completed'
                 job.finished_at = datetime.now(timezone.utc)
                 job.runtime_seconds = int(time.time() - start_time)
@@ -569,6 +582,11 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
         if ser and ser.is_open:
             try:
                 ser.close()
+            except Exception:
+                pass
+        if transfer_session is not None:
+            try:
+                transfer_session.close()
             except Exception:
                 pass
         logger.info(f'Serial port closed: {port.dev_path}')
