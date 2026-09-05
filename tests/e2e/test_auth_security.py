@@ -4,7 +4,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from retrobridge.models import LoginAttempt, User
 
@@ -102,6 +102,7 @@ class TestPasswordPolicy:
             'bio': '',
             'terminal_font_size': 14,
             'terminal_color_scheme': 'dark',
+            'current_password': 'Alice123',
             'new_password': 'weak',
             'confirm_password': 'weak',
         }, follow_redirects=True)
@@ -109,6 +110,40 @@ class TestPasswordPolicy:
         assert (b'uppercase' in resp.data.lower()
                 or b'least 8' in resp.data.lower()
                 or b'digit' in resp.data.lower())
+
+    def test_profile_password_change_requires_current_password(self, client, app):
+        _register(client)
+        _login(client)
+
+        resp = client.post('/auth/profile', data={
+            'email': 'alice@example.com',
+            'full_name': 'Alice',
+            'bio': '',
+            'terminal_font_size': 14,
+            'terminal_color_scheme': 'dark',
+            'current_password': '',
+            'new_password': 'NewPass1!',
+            'confirm_password': 'NewPass1!',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'current password' in resp.data.lower()
+
+    def test_profile_password_change_rejects_wrong_current_password(self, client, app):
+        _register(client)
+        _login(client)
+
+        resp = client.post('/auth/profile', data={
+            'email': 'alice@example.com',
+            'full_name': 'Alice',
+            'bio': '',
+            'terminal_font_size': 14,
+            'terminal_color_scheme': 'dark',
+            'current_password': 'wrong-password',
+            'new_password': 'NewPass1!',
+            'confirm_password': 'NewPass1!',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'incorrect' in resp.data.lower()
 
     def test_profile_password_change_accepts_valid(self, client, app):
         _register(client)
@@ -120,11 +155,15 @@ class TestPasswordPolicy:
             'bio': '',
             'terminal_font_size': 14,
             'terminal_color_scheme': 'dark',
+            'current_password': 'Alice123',
             'new_password': 'NewPass1!',
             'confirm_password': 'NewPass1!',
         }, follow_redirects=True)
         assert resp.status_code == 200
         assert b'Profile updated' in resp.data
+
+        user = app.db_session.query(User).filter_by(username='alice').first()
+        assert check_password_hash(user.password_hash, 'NewPass1!')
 
 
 class TestLoginThrottling:

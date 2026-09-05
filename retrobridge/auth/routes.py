@@ -196,6 +196,9 @@ def profile():
             'terminal_color_scheme': form.terminal_color_scheme.data,
         })
         if form.new_password.data:
+            if not check_password_hash(current_user.password_hash, form.current_password.data):
+                flash('Current password is incorrect.', 'danger')
+                return redirect(url_for('auth.profile'))
             current_user.password_hash = generate_password_hash(form.new_password.data)
             if current_user.email_notify_security:
                 notify_password_changed(current_user)

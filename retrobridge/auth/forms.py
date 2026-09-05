@@ -56,6 +56,7 @@ class ProfileForm(FlaskForm):
     ], default='dark')
     email_notify_jobs = BooleanField('Email me when my jobs complete')
     email_notify_security = BooleanField('Email me for account security events')
+    current_password = PasswordField('Current Password', validators=[Optional()])
     new_password = PasswordField('New Password', validators=[
         Optional(),
         Length(min=8, message='Password must be at least 8 characters.'),
@@ -65,3 +66,8 @@ class ProfileForm(FlaskForm):
         EqualTo('new_password', message='Passwords must match.'),
     ])
     submit = SubmitField('Update Profile')
+
+    def validate_current_password(self, field):
+        # Only require current password when the user is trying to change it.
+        if self.new_password.data and not field.data:
+            raise ValidationError('Current password is required to set a new password.')
