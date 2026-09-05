@@ -3,7 +3,9 @@ from wtforms import (
     BooleanField, IntegerField, PasswordField, SelectField, StringField,
     SubmitField, TextAreaField,
 )
-from wtforms.validators import DataRequired, Length, NumberRange, Optional
+from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
+
+from retrobridge.auth.forms import password_complexity
 
 
 class DeviceForm(FlaskForm):
@@ -62,7 +64,7 @@ class DevicePortForm(FlaskForm):
 
 class UserEditForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired(), Length(min=2, max=64)])
-    email = StringField('Email', validators=[DataRequired(), Length(max=120)])
+    email = StringField('Email', validators=[DataRequired(), Email(), Length(max=120)])
     full_name = StringField('Full Name', validators=[Optional(), Length(max=128)])
     password = PasswordField('Password', validators=[
         Optional(),
@@ -72,6 +74,14 @@ class UserEditForm(FlaskForm):
     max_queued_jobs = IntegerField('Max Queued Jobs', validators=[DataRequired()], default=3)
     max_terminal_sessions = IntegerField('Max Terminal Sessions', validators=[DataRequired()], default=1)
     submit = SubmitField('Save')
+
+
+class UserCreateForm(UserEditForm):
+    password = PasswordField('Password', validators=[
+        DataRequired(),
+        Length(min=8, message='Password must be at least 8 characters.'),
+        password_complexity,
+    ])
 
 
 class SettingsForm(FlaskForm):
