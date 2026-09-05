@@ -24,7 +24,8 @@ def dashboard():
         .limit(50)
         .all()
     )
-    device_stats = get_device_stats(current_app.db_session)
+    device_stats = get_device_stats(
+        current_app.db_session, is_admin=current_user.is_admin)
 
     active_sessions = (
         current_app.db_session.query(TerminalSession)
@@ -87,7 +88,8 @@ def new():
     _, devices = get_device_choices(current_app.db_session)
     form.device_id.choices = get_device_choices(current_app.db_session)[0]
 
-    device_stats = get_device_stats(current_app.db_session)
+    device_stats = get_device_stats(
+        current_app.db_session, is_admin=current_user.is_admin)
     queued_running, max_quota, _ = get_user_quota(
         current_app.db_session, current_user)
     rate_limited, max_per_hour = check_rate_limit(
