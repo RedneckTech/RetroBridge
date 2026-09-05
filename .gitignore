@@ -39,6 +39,10 @@ htmlcov/
 coverage.xml
 *.cover
 
+# Task / review files
+todo.md
+fixit.md
+
 # OS
 .DS_Store
 Thumbs.db

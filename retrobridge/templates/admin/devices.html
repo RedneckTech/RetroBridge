@@ -151,7 +151,7 @@
                                 <form method="POST"
                                       action="{{ url_for('admin.delete_port', device_id=device.id, port_id=port.id) }}"
                                       class="d-inline"
-                                      onsubmit="return confirm('Delete port {{ port.port_label }}?')">
+                                      data-confirm="Delete port {{ port.port_label }}?">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="btn btn-outline-danger">Del</button>
                                 </form>

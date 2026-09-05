@@ -43,8 +43,23 @@ def _terminal_worker_id():
 # Port lease functions (database-backed, cross-worker safe)
 # ---------------------------------------------------------------------------
 
+def _has_local_bridge(session_id):
+    """Return True if this process currently holds an active/suspended bridge."""
+    for bridge in _active_bridges.values():
+        if bridge.get('session_id') == session_id and bridge.get('running'):
+            return True
+    for bridge in _suspended_bridges.values():
+        if bridge.get('session_id') == session_id and bridge.get('running'):
+            return True
+    return False
+
+
 def recover_stale_leases(db_session):
-    """Delete expired port leases and mark their sessions as disconnected."""
+    """Delete expired port leases and mark their sessions as disconnected.
+
+    Sessions backed by a local in-memory bridge are skipped; the bridge's own
+    lifecycle (heartbeat, timeout monitor) is responsible for those records.
+    """
     now = datetime.now(timezone.utc)
     expired = (
         db_session.query(PortLease)
@@ -52,6 +67,13 @@ def recover_stale_leases(db_session):
         .all()
     )
     for lease in expired:
+        if _has_local_bridge(lease.session_id):
+            # The lease may have expired transiently; delete it so the bridge
+            # can re-acquire the port on its next heartbeat. Do NOT mark the
+            # session disconnected while this process is still driving it.
+            db_session.delete(lease)
+            continue
+
         session = db_session.get(TerminalSession, lease.session_id)
         if session and session.status == 'active':
             session.status = 'disconnected'
@@ -236,10 +258,14 @@ def _serial_reader(socketio, ser, session_id):
             if current_sid:
                 socketio.emit('session_closed', {'reason': f'Connection lost: {e}'},
                               namespace='/terminal', to=current_sid)
+            _close_bridge_resources(bridge)
+            _remove_bridge_by_session(session_id)
             break
         except Exception as e:
             logger.exception(f'Read thread error for session {session_id}: {e}')
             bridge['running'] = False
+            _close_bridge_resources(bridge)
+            _remove_bridge_by_session(session_id)
             break
 
 
@@ -251,6 +277,18 @@ def _get_bridge_by_session(session_id):
         if bridge.get('session_id') == session_id and bridge['running']:
             return bridge
     return None
+
+
+def _remove_bridge_by_session(session_id):
+    for sid, bridge in list(_active_bridges.items()):
+        if bridge.get('session_id') == session_id:
+            del _active_bridges[sid]
+            return True
+    for sid, bridge in list(_suspended_bridges.items()):
+        if bridge.get('session_id') == session_id:
+            del _suspended_bridges[sid]
+            return True
+    return False
 
 
 def start_bridge(socketio, sid, session, port):
@@ -336,7 +374,13 @@ def resume_bridge(socketio, new_sid, session_id):
             end_session(db_session, session_id, reason='user_disconnect')
             return None
         bridge['sid'] = new_sid
-        bridge['suspended_at'] = None
+        now_ts = time.time()
+        bridge['last_activity'] = now_ts
+        # Compensate start_time for the suspended period so the max-runtime
+        # budget reflects active time only.
+        suspended_at = bridge.pop('suspended_at', None)
+        if suspended_at:
+            bridge['start_time'] += now_ts - suspended_at
         _active_bridges[new_sid] = bridge
         try:
             if bridge.get('output_buffer'):
@@ -462,6 +506,19 @@ def force_disconnect_session(socketio, session_id, db_session=None):
     if sid:
         stop_bridge(socketio, sid, reason='admin_force',
                     db_session=db_session)
+        return True
+
+    # Check suspended bridges as well
+    with _lock:
+        bridge = _suspended_bridges.get(session_id)
+    if bridge:
+        bridge['running'] = False
+        _close_bridge_resources(bridge)
+        _remove_bridge_by_session(session_id)
+        if db_session is None:
+            from flask import current_app
+            db_session = current_app.db_session
+        end_session(db_session, session_id, reason='admin_force')
         return True
 
     if db_session is None:

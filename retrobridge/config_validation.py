@@ -39,8 +39,15 @@ def validate_config(app):
         )
 
     backup_dir = cfg.get('BACKUP_DIR', '')
-    if backup_dir and not os.access(backup_dir, os.W_OK):
-        errors.append(f'BACKUP_DIR {backup_dir!r} is not writable.')
+    if backup_dir:
+        created_ok = True
+        try:
+            os.makedirs(backup_dir, exist_ok=True)
+        except OSError as exc:
+            errors.append(f'BACKUP_DIR {backup_dir!r} cannot be created: {exc}')
+            created_ok = False
+        if created_ok and not os.access(backup_dir, os.W_OK):
+            errors.append(f'BACKUP_DIR {backup_dir!r} is not writable.')
 
     if errors:
         for msg in errors:

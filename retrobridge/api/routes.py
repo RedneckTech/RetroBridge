@@ -9,13 +9,20 @@ from retrobridge.api import api_bp
 from retrobridge.jobs import utils as jobs_utils
 from retrobridge.models import Job, Device, DevicePort, TerminalSession, User
 
+MAX_PER_PAGE = 100
+MAX_OUTPUT_TAIL = 10000
+
 
 @api_bp.route('/jobs')
 @login_required
 def list_jobs():
     from flask import current_app
     page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), MAX_PER_PAGE)
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 1
 
     query = current_app.db_session.query(Job)
     if not current_user.is_admin:
@@ -65,6 +72,8 @@ def job_output(job_id):
         return jsonify({'lines': []})
 
     tail = request.args.get('tail', type=int)
+    if tail is not None and tail > MAX_OUTPUT_TAIL:
+        tail = MAX_OUTPUT_TAIL
     lines = jobs_utils.read_output_tail(job.output_path, tail)
     return jsonify({'lines': lines})
 

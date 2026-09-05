@@ -203,3 +203,19 @@ function setBtnDisabled(id, disabled) {
     var btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
 }
+
+(function() {
+    'use strict';
+
+    const scriptTag = document.querySelector('script[src*="/static/js/terminal.js"]');
+    if (!scriptTag) return;
+
+    const deviceId = parseInt(scriptTag.dataset.deviceId, 10);
+    const terminalPrefs = {
+        fontSize: parseInt(scriptTag.dataset.terminalFontSize || '14', 10),
+        colorScheme: scriptTag.dataset.terminalColorScheme || 'dark',
+    };
+    if (!deviceId) return;
+
+    initTerminal(deviceId, terminalPrefs);
+})();

@@ -37,8 +37,7 @@
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h4>Active Sessions</h4>
     <div>
-        <button class="btn btn-sm btn-outline-danger" id="bulkDisconnectBtn" disabled
-                onclick="bulkDisconnect()">
+        <button class="btn btn-sm btn-outline-danger" id="bulkDisconnectBtn" disabled>
             Disconnect Selected
         </button>
         <a href="{{ url_for('admin.sessions') }}" class="btn btn-sm btn-outline-secondary ms-1"
@@ -57,8 +56,7 @@
         <thead>
             <tr>
                 <th style="width:30px">
-                    <input type="checkbox" class="form-check-input" id="selectAll"
-                           onchange="toggleAll(this)">
+                    <input type="checkbox" class="form-check-input" id="selectAll">
                 </th>
                 <th>ID</th>
                 <th>User</th>
@@ -77,7 +75,7 @@
             <tr>
                 <td>
                     <input type="checkbox" class="form-check-input session-checkbox"
-                           value="{{ s.id }}" onchange="updateBulkBtn()">
+                           value="{{ s.id }}">
                 </td>
                 <td>{{ s.id }}</td>
                 <td>{{ s.user.username if s.user else 'N/A' }}</td>
@@ -139,7 +137,7 @@
     <div class="col-md-3">
         <form method="GET" id="reasonFilterForm">
             {% if search %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
-            <select name="reason" class="form-select form-select-sm" onchange="this.form.submit()">
+            <select name="reason" class="form-select form-select-sm" id="reason-filter">
                 <option value="">All Reasons</option>
                 {% for r in reasons %}
                 <option value="{{ r }}" {{ 'selected' if reason_filter == r }}>
@@ -288,31 +286,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-function toggleAll(src) {
-    document.querySelectorAll('.session-checkbox').forEach(cb => { cb.checked = src.checked; });
-    updateBulkBtn();
-}
-function updateBulkBtn() {
-    document.getElementById('bulkDisconnectBtn').disabled =
-        document.querySelectorAll('.session-checkbox:checked').length === 0;
-}
-function bulkDisconnect() {
-    const checked = document.querySelectorAll('.session-checkbox:checked');
-    const container = document.getElementById('bulkSessionIds');
-    container.innerHTML = '';
-    checked.forEach(cb => {
-        const input = document.createElement('input');
-        input.type = 'hidden'; input.name = 'session_ids'; input.value = cb.value;
-        container.appendChild(input);
-    });
-    document.getElementById('bulkDisconnectForm').submit();
-}
-document.querySelectorAll('.toggle-detail').forEach(btn => {
-    btn.addEventListener('click', function() {
-        const row = document.getElementById('detail-' + this.dataset.sessionId);
-        if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
-    });
-});
-</script>
+<script src="{{ url_for('static', filename='js/admin-sessions.js') }}"></script>
 {% endblock %}

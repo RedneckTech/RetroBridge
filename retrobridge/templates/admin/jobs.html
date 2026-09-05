@@ -48,7 +48,7 @@
         <form method="GET" id="deviceFilterForm">
             {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
             {% if search %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
-            <select name="device_id" class="form-select form-select-sm" onchange="this.form.submit()">
+            <select name="device_id" class="form-select form-select-sm" id="device-filter">
                 <option value="">All Devices</option>
                 {% for d in devices %}
                 <option value="{{ d.id }}" {{ 'selected' if device_id == d.id|string }}>
@@ -59,8 +59,7 @@
         </form>
     </div>
     <div class="col-md-5 text-end">
-        <button class="btn btn-sm btn-outline-danger" id="bulkCancelBtn" disabled
-                onclick="bulkCancel()">
+        <button class="btn btn-sm btn-outline-danger" id="bulkCancelBtn" disabled>
             Cancel Selected
         </button>
     </div>
@@ -77,8 +76,7 @@
         <thead>
             <tr>
                 <th style="width:30px">
-                    <input type="checkbox" class="form-check-input" id="selectAll"
-                           onchange="toggleAll(this)">
+                    <input type="checkbox" class="form-check-input" id="selectAll">
                 </th>
                 <th>ID</th>
                 <th>User</th>
@@ -97,8 +95,7 @@
                 <td>
                     <input type="checkbox" class="form-check-input job-checkbox"
                            value="{{ job.id }}"
-                           data-cancelable="{{ 'true' if job.status in ('queued','running') else 'false' }}"
-                           onchange="updateBulkBtn()">
+                           data-cancelable="{{ 'true' if job.status in ('queued','running') else 'false' }}">
                 </td>
                 <td>{{ job.id }}</td>
                 <td>{{ job.user.username if job.user else 'N/A' }}</td>
@@ -207,45 +204,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-function toggleAll(src) {
-    document.querySelectorAll('.job-checkbox').forEach(cb => {
-        if (cb.dataset.cancelable === 'true') {
-            cb.checked = src.checked;
-        }
-    });
-    updateBulkBtn();
-}
-
-function updateBulkBtn() {
-    const checked = document.querySelectorAll('.job-checkbox:checked');
-    document.getElementById('bulkCancelBtn').disabled = checked.length === 0;
-}
-
-function bulkCancel() {
-    const checked = document.querySelectorAll('.job-checkbox:checked');
-    const container = document.getElementById('bulkJobIds');
-    container.innerHTML = '';
-    checked.forEach(cb => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'job_ids';
-        input.value = cb.value;
-        container.appendChild(input);
-    });
-    document.getElementById('bulkCancelForm').submit();
-}
-
-// Inline detail toggle
-document.querySelectorAll('.toggle-detail').forEach(link => {
-    link.addEventListener('click', function(e) {
-        e.preventDefault();
-        const jobId = this.dataset.jobId;
-        const row = document.getElementById('detail-' + jobId);
-        if (row) {
-            row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
-        }
-    });
-});
-</script>
+<script src="{{ url_for('static', filename='js/admin-jobs.js') }}"></script>
 {% endblock %}
