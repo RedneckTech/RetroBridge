@@ -204,6 +204,52 @@ class TestLoginThrottling:
         assert resp.status_code == 200
         assert b'Dashboard' in resp.data
 
+    def test_different_usernames_behind_same_ip_are_not_blocked(self, client, app):
+        """NAT scenario: failures for user A should not block user B."""
+        _register(client, username='nat_user_a', password='Alice123')
+        _register(client, username='nat_user_b', password='Bob12345')
+
+        # 5 failed attempts for user_a from the same IP
+        for _ in range(5):
+            client.post('/auth/login', data={
+                'username': 'nat_user_a',
+                'password': 'WrongPass1',
+            }, follow_redirects=True)
+
+        # user_a is now throttled
+        resp = client.post('/auth/login', data={
+            'username': 'nat_user_a',
+            'password': 'Alice123',
+        }, follow_redirects=True)
+        assert b'Too many failed' in resp.data
+
+        # user_b should still be able to log in from the same IP
+        resp = client.post('/auth/login', data={
+            'username': 'nat_user_b',
+            'password': 'Bob12345',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'Dashboard' in resp.data
+
+    def test_username_throttled_across_ips(self, client, app):
+        """Distributed brute force: many IPs attacking one user still throttles."""
+        _register(client, username='target', password='Target1!')
+
+        # Simulate 5 different IPs (via X-Forwarded-For) attacking same user.
+        for i in range(5):
+            client.post('/auth/login', data={
+                'username': 'target',
+                'password': 'WrongPass1',
+            }, headers={'X-Forwarded-For': f'10.0.0.{i}'}, follow_redirects=True)
+
+        # A 6th IP with the right password should still be throttled.
+        resp = client.post('/auth/login', data={
+            'username': 'target',
+            'password': 'Target1!',
+        }, headers={'X-Forwarded-For': '10.0.0.99'}, follow_redirects=True)
+        assert resp.status_code == 200
+        assert b'Too many failed' in resp.data
+
     def test_throttled_attempt_is_recorded(self, client, app):
         _register(client, username='tracked', password='Tracked1')
 

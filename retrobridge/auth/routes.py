@@ -14,6 +14,7 @@ from retrobridge.integrations.email import (
     notify_password_changed, notify_email_changed,
     notify_new_login, notify_account_deleted,
 )
+from retrobridge.security import _client_ip
 
 MAX_FAILED_ATTEMPTS = 5
 THROTTLE_WINDOW_MINUTES = 15
@@ -29,18 +30,51 @@ def _record_attempt(db_session, ip_address, username, success):
     db_session.commit()
 
 
-def _is_throttled(db_session, ip_address):
+def _clear_failed_attempts(db_session, username, ip_address):
+    """Reset the failure window for a username after a successful login."""
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=THROTTLE_WINDOW_MINUTES)
-    count = (
+    db_session.query(LoginAttempt).filter(
+        LoginAttempt.username == username,
+        LoginAttempt.ip_address == ip_address,
+        LoginAttempt.success.is_(False),
+        LoginAttempt.attempted_at >= cutoff,
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+
+def _is_throttled(db_session, ip_address, username):
+    """Throttle by (ip, username) pair and by username across all IPs.
+
+    Pair-level throttling prevents one user behind a shared NAT from locking
+    out everyone else when they forget their password. Username-level
+    throttling still catches distributed brute-force attempts against a
+    single account.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=THROTTLE_WINDOW_MINUTES)
+
+    ip_pair_count = (
         db_session.query(LoginAttempt)
         .filter(
             LoginAttempt.ip_address == ip_address,
+            LoginAttempt.username == username,
             LoginAttempt.success.is_(False),
             LoginAttempt.attempted_at >= cutoff,
         )
         .count()
     )
-    return count >= MAX_FAILED_ATTEMPTS
+    if ip_pair_count >= MAX_FAILED_ATTEMPTS:
+        return True
+
+    username_count = (
+        db_session.query(LoginAttempt)
+        .filter(
+            LoginAttempt.username == username,
+            LoginAttempt.success.is_(False),
+            LoginAttempt.attempted_at >= cutoff,
+        )
+        .count()
+    )
+    return username_count >= MAX_FAILED_ATTEMPTS
 
 
 def _is_safe_redirect_url(target):
@@ -59,11 +93,12 @@ def login():
         return redirect(url_for('jobs.dashboard'))
 
     from flask import current_app
-    ip_address = request.remote_addr or '127.0.0.1'
+    ip_address = _client_ip(request) or '127.0.0.1'
 
     form = LoginForm()
     if form.validate_on_submit():
-        if _is_throttled(current_app.db_session, ip_address):
+        username = form.username.data
+        if _is_throttled(current_app.db_session, ip_address, username):
             flash(
                 f'Too many failed login attempts. '
                 f'Please try again in {THROTTLE_WINDOW_MINUTES} minutes.',
@@ -72,7 +107,7 @@ def login():
             return render_template('auth/login.html', form=form)
 
         user = current_app.db_session.query(User).filter_by(
-            username=form.username.data
+            username=username
         ).first()
 
         if user and check_password_hash(user.password_hash, form.password.data):
@@ -86,8 +121,9 @@ def login():
                 except Exception:
                     pass
 
+            _clear_failed_attempts(current_app.db_session, username, ip_address)
             _record_attempt(current_app.db_session, ip_address,
-                            form.username.data, success=True)
+                            username, success=True)
 
             if user.email_notify_security:
                 prior_attempts = (
@@ -109,7 +145,7 @@ def login():
             return redirect(url_for('jobs.dashboard'))
         else:
             _record_attempt(current_app.db_session, ip_address,
-                            form.username.data, success=False)
+                            username, success=False)
             flash('Invalid username or password.', 'danger')
 
     return render_template('auth/login.html', form=form)
