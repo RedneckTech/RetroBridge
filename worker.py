@@ -597,6 +597,35 @@ def worker_loop(device_name: str, poll_interval: int = 5):
     while not shutdown_flag:
         session = SessionLocal()
         try:
+            device = session.query(Device).filter_by(name=device_name, is_enabled=True).first()
+            if not device:
+                logger.warning(f'Device {device_name} not found or disabled; sleeping')
+                session.close()
+                time.sleep(poll_interval)
+                continue
+
+            # Check for force-canceled jobs
+            canceled = (
+                session.query(Job)
+                .filter_by(device_id=device.id, status='canceled')
+                .all()
+            )
+            for cj in canceled:
+                logger.info(f'Job #{cj.id} was force-canceled')
+
+            # Cancel any queued jobs with cancel_requested that weren't claimed.
+            # This must run regardless of whether a job is claimed this cycle.
+            orphaned = (
+                session.query(Job)
+                .filter_by(device_id=device.id)
+                .filter(Job.status == 'queued', Job.cancel_requested.is_(True))
+                .all()
+            )
+            for oj in orphaned:
+                oj.status = 'canceled'
+                session.commit()
+                logger.info(f'Job #{oj.id} was canceled (queued with cancel_requested)')
+
             job = claim_job(session, device_name, logger)
             if job:
                 port = job.port
@@ -611,7 +640,7 @@ def worker_loop(device_name: str, poll_interval: int = 5):
                 logger.info(f'Claimed job #{job.id}: {job.original_filename} '
                              f'on port {port.port_label} ({port.dev_path})')
 
-                success = run_job_on_device(job, port, logger, SessionLocal)
+                run_job_on_device(job, port, logger, SessionLocal)
 
                 session.add(job)
                 session.commit()
@@ -626,27 +655,6 @@ def worker_loop(device_name: str, poll_interval: int = 5):
                         notify_job_completed(user, job, settings=settings)
                     except Exception:
                         logger.exception('Failed to send job completion email for job #%s', job.id)
-
-            # Check for force-canceled jobs
-            canceled = (
-                session.query(Job)
-                .filter_by(device_id=job.device_id if job else None, status='canceled')
-                .all()
-            )
-            for cj in canceled:
-                logger.info(f'Job #{cj.id} was force-canceled')
-
-            # Cancel any queued jobs with cancel_requested that weren't claimed
-            orphaned = (
-                session.query(Job)
-                .filter_by(device_id=job.device_id if job else None)
-                .filter(Job.status == 'queued', Job.cancel_requested.is_(True))
-                .all()
-            )
-            for oj in orphaned:
-                oj.status = 'canceled'
-                session.commit()
-                logger.info(f'Job #{oj.id} was canceled (queued with cancel_requested)')
         except Exception as e:
             logger.exception(f'Error in worker loop: {e}')
             session.rollback()
