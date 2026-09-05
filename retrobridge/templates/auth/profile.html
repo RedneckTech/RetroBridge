@@ -224,14 +224,21 @@
                     <h5>Change Password</h5>
                     <p class="text-muted small">Leave blank to keep your current password.</p>
                     <div class="row">
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-4 mb-3">
+                            {{ form.current_password.label(class="form-label") }}
+                            {{ form.current_password(class="form-control", placeholder="Current password") }}
+                            {% for error in form.current_password.errors %}
+                            <div class="invalid-feedback d-block">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="col-md-4 mb-3">
                             {{ form.new_password.label(class="form-label") }}
                             {{ form.new_password(class="form-control", placeholder="New password") }}
                             {% for error in form.new_password.errors %}
                             <div class="invalid-feedback d-block">{{ error }}</div>
                             {% endfor %}
                         </div>
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-4 mb-3">
                             {{ form.confirm_password.label(class="form-label") }}
                             {{ form.confirm_password(class="form-control", placeholder="Confirm new password") }}
                             {% for error in form.confirm_password.errors %}
