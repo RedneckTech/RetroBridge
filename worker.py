@@ -38,7 +38,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
 from retrobridge.models import Base, Device, DevicePort, Job, User  # noqa: E402
 from retrobridge.transport import open_transport, transport_uses_baud  # noqa: E402
-from retrobridge.integrations.email import notify_job_completed  # noqa: E402
+from retrobridge.integrations.email import (  # noqa: E402
+    notify_job_completed,
+    _load_settings_from_db,
+)
 
 LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -616,9 +619,10 @@ def worker_loop(device_name: str, poll_interval: int = 5):
                 user = session.query(User).filter_by(id=job.user_id).first()
                 if user and user.email_notify_jobs and job.status in ('completed', 'failed', 'canceled'):
                     try:
-                        notify_job_completed(user, job)
+                        settings = _load_settings_from_db(session)
+                        notify_job_completed(user, job, settings=settings)
                     except Exception:
-                        pass
+                        logger.exception('Failed to send job completion email for job #%s', job.id)
 
             # Check for force-canceled jobs
             canceled = (

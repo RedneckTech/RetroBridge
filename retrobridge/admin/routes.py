@@ -195,6 +195,8 @@ def delete_user(user_id):
 
     user = current_app.db_session.get(User, user_id)
     if user:
+        from retrobridge.api.routes import _delete_user_directories
+        _delete_user_directories(current_app, user.id)
         current_app.db_session.delete(user)
         current_app.db_session.commit()
         flash('User deleted.', 'info')
