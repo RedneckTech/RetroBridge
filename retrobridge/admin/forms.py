@@ -1,6 +1,7 @@
 from flask_wtf import FlaskForm
 from wtforms import (
-    BooleanField, IntegerField, SelectField, StringField, SubmitField, TextAreaField,
+    BooleanField, IntegerField, PasswordField, SelectField, StringField,
+    SubmitField, TextAreaField,
 )
 from wtforms.validators import DataRequired, Length, NumberRange, Optional
 
@@ -63,7 +64,7 @@ class UserEditForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired(), Length(min=2, max=64)])
     email = StringField('Email', validators=[DataRequired(), Length(max=120)])
     full_name = StringField('Full Name', validators=[Optional(), Length(max=128)])
-    password = StringField('Password', validators=[
+    password = PasswordField('Password', validators=[
         Optional(),
         Length(min=8, message='Password must be at least 8 characters.'),
     ])
@@ -115,7 +116,7 @@ class SettingsForm(FlaskForm):
     email_smtp_host = StringField('SMTP Host', validators=[Optional(), Length(max=128)])
     email_smtp_port = IntegerField('SMTP Port', validators=[Optional(), NumberRange(min=1, max=65535)])
     email_smtp_user = StringField('SMTP Username', validators=[Optional(), Length(max=128)])
-    email_smtp_password = StringField('SMTP Password', validators=[Optional(), Length(max=128)])
+    email_smtp_password = PasswordField('SMTP Password', validators=[Optional(), Length(max=128)])
     email_use_tls = BooleanField('Use STARTTLS')
     email_from_address = StringField('From Address', validators=[Optional(), Length(max=128)])
     email_from_name = StringField('From Name', validators=[Optional(), Length(max=64)])

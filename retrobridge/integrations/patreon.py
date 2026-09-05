@@ -245,8 +245,8 @@ def get_tier_limits(tier_name):
     if not tier_key or tier_key == 'none':
         return None, None
 
-    jobs_key = f'patreon_tier_{tier_key}_jobs'
-    sessions_key = f'patreon_tier_{tier_key}_sessions'
+    jobs_key = f'PATREON_TIER_{tier_key.upper()}_JOBS'
+    sessions_key = f'PATREON_TIER_{tier_key.upper()}_SESSIONS'
 
     try:
         jobs = int(_get_setting(jobs_key, '0'))

@@ -121,6 +121,12 @@ def create_user():
             flash('Username already taken.', 'danger')
             return redirect(url_for('admin.users'))
 
+        existing_email = current_app.db_session.query(User).filter_by(
+            email=form.email.data).first()
+        if existing_email:
+            flash('Email already in use.', 'danger')
+            return redirect(url_for('admin.users'))
+
         user = User(
             username=form.username.data,
             email=form.email.data,
@@ -141,6 +147,7 @@ def create_user():
 @admin_required
 def edit_user(user_id):
     from flask import current_app
+    from werkzeug.security import generate_password_hash
     user = current_app.db_session.get(User, user_id)
     if not user:
         flash('User not found.', 'danger')
@@ -148,12 +155,30 @@ def edit_user(user_id):
 
     form = UserEditForm(obj=user)
     if form.validate_on_submit():
+        existing = current_app.db_session.query(User).filter(
+            User.username == form.username.data,
+            User.id != user.id,
+        ).first()
+        if existing:
+            flash('Username already taken.', 'danger')
+            return redirect(url_for('admin.users'))
+
+        existing_email = current_app.db_session.query(User).filter(
+            User.email == form.email.data,
+            User.id != user.id,
+        ).first()
+        if existing_email:
+            flash('Email already in use.', 'danger')
+            return redirect(url_for('admin.users'))
+
         user.username = form.username.data
         user.email = form.email.data
         user.full_name = form.full_name.data
         user.is_admin = form.is_admin.data
         user.max_queued_jobs = form.max_queued_jobs.data
         user.max_terminal_sessions = form.max_terminal_sessions.data
+        if form.password.data:
+            user.password_hash = generate_password_hash(form.password.data)
         current_app.db_session.commit()
         flash('User updated.', 'success')
     return redirect(url_for('admin.users'))
@@ -591,22 +616,33 @@ SETTING_MAP = {
     'email_from_name': ('EMAIL_FROM_NAME', str),
 }
 
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_bool(value):
+    return str(value).lower() in ('1', 'true', 'yes', 'on')
+
+
 SETTING_REVERSE = {
-    'MAX_UPLOAD_SIZE_BYTES': lambda v: int(v) // (1024 * 1024),
-    'DEFAULT_MAX_QUEUED_JOBS': int,
-    'DEFAULT_MAX_TERMINAL_SESSIONS': int,
-    'MAX_JOBS_PER_HOUR': int,
-    'MAX_TERMINAL_SESSION_SECONDS': lambda v: int(v) // 60,
-    'TERMINAL_IDLE_TIMEOUT_SECONDS': lambda v: int(v) // 60,
-    'WORKER_POLL_SECONDS': int,
-    'REGISTRATION_OPEN': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
-    'MAINTENANCE_MODE': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
-    'TERMINAL_SESSION_LOG_ENABLED': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
+    'MAX_UPLOAD_SIZE_BYTES': lambda v: _safe_int(v) // (1024 * 1024),
+    'DEFAULT_MAX_QUEUED_JOBS': _safe_int,
+    'DEFAULT_MAX_TERMINAL_SESSIONS': _safe_int,
+    'MAX_JOBS_PER_HOUR': _safe_int,
+    'MAX_TERMINAL_SESSION_SECONDS': lambda v: _safe_int(v) // 60,
+    'TERMINAL_IDLE_TIMEOUT_SECONDS': lambda v: _safe_int(v) // 60,
+    'WORKER_POLL_SECONDS': _safe_int,
+    'REGISTRATION_OPEN': _safe_bool,
+    'MAINTENANCE_MODE': _safe_bool,
+    'TERMINAL_SESSION_LOG_ENABLED': _safe_bool,
     'EMAIL_SMTP_HOST': str,
-    'EMAIL_SMTP_PORT': int,
+    'EMAIL_SMTP_PORT': _safe_int,
     'EMAIL_SMTP_USER': str,
     'EMAIL_SMTP_PASSWORD': str,
-    'EMAIL_USE_TLS': lambda v: str(v).lower() in ('1', 'true', 'yes', 'on'),
+    'EMAIL_USE_TLS': _safe_bool,
     'EMAIL_FROM_ADDRESS': str,
     'EMAIL_FROM_NAME': str,
 }
