@@ -166,7 +166,7 @@ Section 10 defines the testing strategy at unit, integration, and end-to-end lev
                                │ HTTP         │ WebSocket
                           ┌────▼────┐    ┌────▼──────────┐
                           │gunicorn │    │ Flask-SocketIO │
-                          │(WSGI)   │    │ (eventlet)     │
+                          │(WSGI)   │    │ (threading)    │
                           └────┬────┘    └────┬───────────┘
                                │              │
                           ┌────▼──────────────▼──────┐
@@ -203,13 +203,12 @@ Section 10 defines the testing strategy at unit, integration, and end-to-end lev
 | ----------------------------------------- | ----------------------------------------------------------------------- | --------------- | -------------------- |
 | nginx                                     | TLS termination, reverse proxy, static file serving, WebSocket proxying | systemd         | 1                    |
 | gunicorn (master)                         | WSGI server, spawns worker processes                                    | systemd         | 1                    |
-| gunicorn (workers)                        | Handle HTTP requests, execute Flask REST routes                         | gunicorn master | 2–4                  |
-| Flask-SocketIO (eventlet)                 | Handle WebSocket connections for interactive terminals                  | gunicorn master | 1 async worker       |
+| gunicorn (workers, gthread)              | Handle HTTP requests, Flask REST routes, and SocketIO WebSockets        | gunicorn master | 1 (64 threads; >1 only with a SocketIO message queue) |
 | retrobridge-worker@centurion              | Claim centurion jobs on job-dedicated ports, perform serial transfers   | systemd         | 1                    |
 | retrobridge-worker@pdp11                  | Claim pdp11 jobs on job-dedicated ports, perform serial transfers       | systemd         | 1                    |
 | Terminal session handler (per connection) | Bridges WebSocket ↔ RS-232 interactive port in real time                | Flask-SocketIO  | 1 per active session |
 
-Inter-process communication for job processing is mediated through the SQLite database in WAL mode. Terminal sessions use WebSocket connections managed by Flask-SocketIO with eventlet async workers. The serial port bridging (WebSocket ↔ RS-232) runs in background threads spawned per active terminal session, reading from the serial port and emitting via WebSocket, and writing user keystrokes to the serial port.
+Inter-process communication for job processing is mediated through the SQLite database in WAL mode. Terminal sessions use WebSocket connections managed by Flask-SocketIO in threading mode inside the gthread workers. The serial port bridging (WebSocket ↔ RS-232) runs in background threads spawned per active terminal session, reading from the serial port and emitting via WebSocket, and writing user keystrokes to the serial port.
 
 ### 2.3 Request/Response Flow
 
@@ -239,7 +238,7 @@ Inter-process communication for job processing is mediated through the SQLite da
 - Flask application factory (`create_app()`)
 - Configuration loading from `config.py` (classes: `DevConfig`, `ProdConfig`, `TestConfig`)
 - Blueprint registration for `auth`, `jobs`, `api`, `terminal`, and `admin`
-- Flask-SocketIO initialization (`SocketIO(app, async_mode='eventlet')`)
+- Flask-SocketIO initialization (`SocketIO(app, async_mode='threading')`)
 - Error handlers: 404 (Not Found), 500 (Internal Server Error), 403 (Forbidden)
 - SQLAlchemy initialization with Flask app context
 
@@ -379,7 +378,6 @@ SQLAlchemy==2.0.*
 pyserial==3.5
 xmodem==0.4.*
 gunicorn==21.*
-eventlet==0.36.*
 werkzeug==3.0.*
 email-validator==2.1.*
 ```
@@ -393,8 +391,7 @@ email-validator==2.1.*
 | SQLAlchemy      | 2.0.x   | ORM, connection pooling, schema management               |
 | pyserial        | 3.5     | Serial port I/O for worker processes and terminal bridge |
 | xmodem          | 0.4.x   | XMODEM file transfer protocol implementation             |
-| gunicorn        | 21.x    | Production WSGI server                                   |
-| eventlet        | 0.36.x  | Async worker for Flask-SocketIO (monkey-patches stdlib)  |
+| gunicorn        | 21.x    | Production WSGI server (gthread workers)                 |
 | werkzeug        | 3.0.x   | Password hashing utilities (bundled with Flask)          |
 | email-validator | 2.1.x   | Email format validation in forms                         |
 
@@ -432,7 +429,7 @@ Worker Processes (systemd units)
 - `timeout=10` on worker connections to handle busy database gracefully
 - Flask uses SQLAlchemy `scoped_session` per request; workers use raw `sqlite3` or SQLAlchemy `Session` per loop iteration
 - Job workers communicate via the database only (poll/claim/update)
-- Terminal session manager (Flask-SocketIO) reads `DevicePort` config from DB at session start, manages session records in DB, but the serial-WebSocket bridge runs entirely in-memory using eventlet green threads
+- Terminal session manager (Flask-SocketIO) reads `DevicePort` config from DB at session start, manages session records in DB, but the serial-WebSocket bridge runs entirely in-memory using background threads
 
 ---
 
@@ -886,13 +883,13 @@ transport=telnet  dev_path=192.168.1.10:23  newline_mode=crlf
 6. On success:
    - Create `TerminalSession` record: `INSERT INTO terminal_sessions (user_id, device_id, port_id, status) VALUES (...)`
    - Open the serial port via `pyserial` using the `DevicePort` configuration
-   - Spawn an eventlet green thread that continuously reads from the serial port and emits `terminal_output` events to the client
+   - Spawn a background thread that continuously reads from the serial port and emits `terminal_output` events to the client
    - Emit `session_granted` with `{ "session_id": <id>, "device_name": "...", "port_label": "...", "cols": 80, "rows": 24 }`
 
 **Bidirectional Serial Bridge:**
 
 - **Client → Serial**: On `terminal_input` events, the server writes the raw `data` bytes directly to the serial port via `ser.write(data.encode())`. No translation or buffering — the vintage system sees exactly what the user types.
-- **Serial → Client**: The background green thread reads from `ser.read(1024)` in a loop with a short timeout. Any bytes read are emitted via `terminal_output` to the client. xterm.js renders them in the browser terminal.
+- **Serial → Client**: The background reader thread reads from the serial port in a loop with a short timeout. Any bytes read are emitted via `terminal_output` to the client. xterm.js renders them in the browser terminal.
 - **Resize events**: On `terminal_resize`, the server may send a SIGWINCH-equivalent escape sequence if the vintage OS supports it. Otherwise, the resize is cosmetic (xterm.js adjusts its display dimensions).
 - **Heartbeat**: Client sends `heartbeat` every 30 seconds; server responds with `heartbeat_ack`. If the server misses 3 consecutive heartbeats, it closes the session.
 
@@ -1321,7 +1318,7 @@ Controlled by the per-user `email_notify_security` flag (default on). Sent for:
 
 ```ini
 [Unit]
-Description=RetroBridge Web Application (gunicorn + eventlet for WebSocket)
+Description=RetroBridge Web Application (gunicorn gthread + threading SocketIO)
 After=network.target
 
 [Service]
@@ -1329,7 +1326,7 @@ User=retrobridge
 Group=www-data
 WorkingDirectory=/srv/retrobridge
 Environment="FLASK_ENV=production"
-ExecStart=/srv/retrobridge/venv/bin/gunicorn -k eventlet -w 1 -b 127.0.0.1:8000 wsgi:app
+ExecStart=/srv/retrobridge/venv/bin/gunicorn -k gthread --threads 64 -w 1 -b 127.0.0.1:8000 wsgi:app
 Restart=always
 RestartSec=5
 
@@ -1619,7 +1616,7 @@ User=<user>
 Group=www-data
 WorkingDirectory=<prefix>
 Environment="FLASK_ENV=production"
-ExecStart=<prefix>/venv/bin/gunicorn -k eventlet -w 1 -b 127.0.0.1:<port> wsgi:app
+ExecStart=<prefix>/venv/bin/gunicorn -k gthread --threads 64 -w 1 -b 127.0.0.1:<port> wsgi:app
 Restart=always
 RestartSec=5
 
