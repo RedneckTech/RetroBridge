@@ -180,6 +180,7 @@
                         {{ form.newline_mode(class="form-select form-select-sm") }}
                     </div>
                 </div>
+                {% if current_user.is_admin %}
                 <div class="row mt-2">
                     <div class="col-md-6 mb-2">
                         {{ form.pre_transfer_cmds.label(class="form-label small") }}
@@ -194,6 +195,7 @@
                         <div class="form-text small">Overrides the port default. Leave blank to use port settings.</div>
                     </div>
                 </div>
+                {% endif %}
             </div>
         </div>
     </div>

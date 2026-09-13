@@ -638,6 +638,55 @@ class TestAdminSettings:
         assert b'Uploads' in resp.data
         assert b'Terminal' in resp.data
 
+    def test_settings_page_does_not_disclose_smtp_password(self, admin_app,
+                                                           admin_client):
+        admin_app.db_session.add(AdminSetting(
+            key='EMAIL_SMTP_PASSWORD', value='super-secret-pw',
+            description='SMTP password'))
+        admin_app.db_session.commit()
+
+        resp = admin_client.get('/admin/settings')
+        assert resp.status_code == 200
+        assert b'super-secret-pw' not in resp.data
+
+    def test_blank_smtp_password_keeps_existing_value(self, admin_app,
+                                                      admin_client):
+        admin_app.db_session.add(AdminSetting(
+            key='EMAIL_SMTP_PASSWORD', value='super-secret-pw',
+            description='SMTP password'))
+        admin_app.db_session.commit()
+
+        resp = admin_client.post('/admin/settings', data={
+            'max_upload_size_mb': 16,
+            'default_max_queued_jobs': 3,
+            'default_max_terminal_sessions': 1,
+            'max_jobs_per_hour': 10,
+            'max_terminal_session_minutes': 60,
+            'terminal_idle_timeout_minutes': 5,
+            'worker_poll_seconds': 5,
+            'email_smtp_password': '',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+
+        s = admin_app.db_session.get(AdminSetting, 'EMAIL_SMTP_PASSWORD')
+        assert s.value == 'super-secret-pw'
+
+    def test_new_smtp_password_is_saved(self, admin_app, admin_client):
+        resp = admin_client.post('/admin/settings', data={
+            'max_upload_size_mb': 16,
+            'default_max_queued_jobs': 3,
+            'default_max_terminal_sessions': 1,
+            'max_jobs_per_hour': 10,
+            'max_terminal_session_minutes': 60,
+            'terminal_idle_timeout_minutes': 5,
+            'worker_poll_seconds': 5,
+            'email_smtp_password': 'new-password',
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+
+        s = admin_app.db_session.get(AdminSetting, 'EMAIL_SMTP_PASSWORD')
+        assert s.value == 'new-password'
+
     def test_admin_can_save_settings(self, admin_app, admin_client):
         resp = admin_client.post('/admin/settings', data={
             'max_upload_size_mb': 32,

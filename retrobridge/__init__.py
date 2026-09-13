@@ -62,7 +62,7 @@ def create_app(config=None):
     login_manager.login_message_category = 'warning'
     login_manager.session_protection = 'strong'
 
-    socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet'))
+    socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'))
     socketio._flask_app = app
     csrf.init_app(app)
 

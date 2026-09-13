@@ -320,6 +320,86 @@ class TestJobDetailAndListing:
             assert f'dash{i}.bin'.encode() in resp.data
 
 
+class TestCommandOverrideAuthz:
+    """Admin-only transfer command overrides: non-admins must not be able to
+    make the device execute arbitrary commands via job submission."""
+
+    @pytest.fixture
+    def admin_seeded_app(self, app):
+        user = User(username='jobuser', email='jobuser@example.com',
+                    password_hash=generate_password_hash('password'),
+                    max_queued_jobs=5)
+        admin = User(username='boss', email='boss@example.com',
+                     password_hash=generate_password_hash('password'),
+                     is_admin=True)
+        device = Device(name='centurion')
+        app.db_session.add_all([user, admin, device])
+        app.db_session.commit()
+        return app
+
+    def _login(self, client, username):
+        client.post('/auth/login', data={
+            'username': username, 'password': 'password',
+        }, follow_redirects=True)
+
+    def _submit(self, client, overrides):
+        data = {
+            'device_id': 1,
+            'priority': 0,
+            'file': (io.BytesIO(b'data'), 'prog.bin'),
+        }
+        data.update(overrides)
+        return client.post('/new', data=data,
+                           content_type='multipart/form-data',
+                           follow_redirects=True)
+
+    def test_non_admin_command_overrides_are_ignored(self, admin_seeded_app):
+        client = admin_seeded_app.test_client()
+        self._login(client, 'jobuser')
+
+        resp = self._submit(client, {
+            'pre_transfer_cmds': 'FORMAT C:\\r',
+            'post_transfer_cmds': 'RUN EVIL\\r',
+        })
+        assert b'submitted successfully' in resp.data.lower()
+
+        job = admin_seeded_app.db_session.query(Job).first()
+        assert job is not None
+        assert job.override_pre_transfer_cmds is None
+        assert job.override_post_transfer_cmds is None
+
+    def test_admin_command_overrides_are_stored(self, admin_seeded_app):
+        client = admin_seeded_app.test_client()
+        self._login(client, 'boss')
+
+        resp = self._submit(client, {
+            'pre_transfer_cmds': 'AT\\r',
+            'post_transfer_cmds': 'RUN\\r',
+        })
+        assert b'submitted successfully' in resp.data.lower()
+
+        job = admin_seeded_app.db_session.query(Job).first()
+        assert job is not None
+        assert job.override_pre_transfer_cmds == 'AT\\r'
+        assert job.override_post_transfer_cmds == 'RUN\\r'
+
+    def test_non_admin_new_form_hides_command_fields(self, admin_seeded_app):
+        client = admin_seeded_app.test_client()
+        self._login(client, 'jobuser')
+        resp = client.get('/new')
+        assert resp.status_code == 200
+        assert b'pre_transfer_cmds' not in resp.data
+        assert b'post_transfer_cmds' not in resp.data
+
+    def test_admin_new_form_shows_command_fields(self, admin_seeded_app):
+        client = admin_seeded_app.test_client()
+        self._login(client, 'boss')
+        resp = client.get('/new')
+        assert resp.status_code == 200
+        assert b'pre_transfer_cmds' in resp.data
+        assert b'post_transfer_cmds' in resp.data
+
+
 class TestJobRateLimit:
     """Tests for MAX_JOBS_PER_HOUR rate limiting."""
 

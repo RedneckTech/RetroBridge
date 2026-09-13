@@ -79,9 +79,16 @@ class _MemoryRateLimiterStore:
 class _SqliteRateLimiterStore:
     """SQLite-backed sliding-window timestamp store shared across workers."""
 
+    # Global sweep settings: rows older than MAX_AGE seconds are certainly
+    # expired (in-app windows are <= 60s); sweep at most every SWEEP_INTERVAL
+    # seconds to avoid scanning the table on every request.
+    MAX_AGE = 24 * 3600
+    SWEEP_INTERVAL = 300
+
     def __init__(self, path, busy_timeout=5000):
         self._path = path
         self._busy_timeout = busy_timeout
+        self._last_sweep = 0.0
         self._ensure_table()
 
     def _connect(self):
@@ -102,9 +109,27 @@ class _SqliteRateLimiterStore:
                 'ON rate_limits (key, timestamp)'
             )
 
+    def _sweep_if_due(self, now):
+        """Prune expired rows from dead (ip, endpoint) keys so the table
+        cannot grow without bound."""
+        if now - self._last_sweep < self.SWEEP_INTERVAL:
+            return
+        self._last_sweep = now
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    'DELETE FROM rate_limits WHERE timestamp < ?',
+                    (now - self.MAX_AGE,)
+                )
+        except Exception:
+            logger.warning('Rate-limit sweep failed; will retry later',
+                           exc_info=True)
+
     def check(self, key, max_req, window):
         now = time.time()
         cutoff = now - window
+
+        self._sweep_if_due(now)
 
         with self._connect() as conn:
             # Use an immediate transaction so concurrent workers serialize.

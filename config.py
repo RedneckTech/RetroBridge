@@ -55,6 +55,18 @@ class BaseConfig:
         },
     }
 
+    # Extra origins (comma-separated) allowed to open the /terminal
+    # WebSocket.  Same-origin browser connections are always allowed;
+    # foreign Origins are rejected unless listed here.
+    SOCKETIO_ALLOWED_ORIGINS = [
+        o.strip()
+        for o in os.environ.get('SOCKETIO_ALLOWED_ORIGINS', '').split(',')
+        if o.strip()
+    ]
+
+    # Optional token required by GET /ready (health probes).  Empty = open.
+    HEALTH_TOKEN = os.environ.get('HEALTH_TOKEN', '')
+
     UPLOAD_DIR = os.path.join(basedir, 'uploads')
     OUTPUT_DIR = os.path.join(basedir, 'outputs')
     SESSION_LOG_DIR = os.path.join(basedir, 'session_logs')
@@ -74,11 +86,12 @@ class BaseConfig:
         'default': (0, 60),
     }
 
-    # SSE (job events) tuning. Under a sync gunicorn worker this endpoint
-    # holds a thread for the lifetime of the connection; use an async worker
-    # (eventlet/gevent) in production, or keep the interval short.
+    # SSE (job events) tuning. Each open stream holds a gthread worker
+    # thread for its lifetime; the poll interval keeps those idle cycles
+    # cheap.  MAX_LIFETIME bounds how long a stream may stay open (0 =
+    # unlimited) so a queued job cannot pin a thread forever.
     JOB_EVENTS_POLL_INTERVAL = float(os.environ.get('JOB_EVENTS_POLL_INTERVAL', '1.0'))
-    JOB_EVENTS_MAX_LIFETIME = float(os.environ.get('JOB_EVENTS_MAX_LIFETIME', '0')) or None
+    JOB_EVENTS_MAX_LIFETIME = float(os.environ.get('JOB_EVENTS_MAX_LIFETIME', '3600')) or None
 
 
 class DevConfig(BaseConfig):
@@ -113,7 +126,7 @@ class TestConfig(BaseConfig):
 class ProdConfig(BaseConfig):
     DEBUG = False
     TESTING = False
-    SOCKETIO_ASYNC_MODE = 'eventlet'
+    SOCKETIO_ASYNC_MODE = 'threading'
     SQLALCHEMY_DATABASE_URI = get_database_uri()
     SQLITE_PRAGMAS = {
         'journal_mode': 'WAL',
@@ -135,8 +148,8 @@ class ProdConfig(BaseConfig):
         'Content-Security-Policy': (
             "default-src 'self'; "
             "script-src 'self' cdn.jsdelivr.net; "
-            "style-src 'self' cdn.jsdelivr.net; "
-            "img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+            "img-src 'self' data: https://www.gravatar.com; "
             "font-src 'self' cdn.jsdelivr.net; "
             "connect-src 'self' wss:; "
             "frame-ancestors 'none'"

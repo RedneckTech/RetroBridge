@@ -210,7 +210,11 @@ class TestSocketWrapper:
     def test_in_waiting_returns_int(self):
         wrapper = _SocketWrapper.__new__(_SocketWrapper)
         wrapper._sock = None
-        assert wrapper.in_waiting == 0
+        # A wrapper without a live socket is a closed connection: the new
+        # contract is to raise SerialException rather than hang silently.
+        from serial import SerialException
+        with pytest.raises(SerialException):
+            wrapper.in_waiting
 
     def test_in_waiting_drains_socket_into_buffer(self):
         ready = threading.Event()

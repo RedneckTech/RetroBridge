@@ -196,6 +196,121 @@ class TestTerminalSessionDenial:
             sim['thread'].join(timeout=2)
 
 
+class TestSocketioOriginValidation:
+    """CSWSH defense: the /terminal socket must reject foreign Origin
+    headers so a malicious page cannot ride the victim's session."""
+
+    def _connect(self, seeded_app, seeded_client, headers=None):
+        from retrobridge import socketio
+        _login(seeded_client)
+        return SocketIOTestClient(seeded_app, socketio,
+                                  namespace='/terminal',
+                                  flask_test_client=seeded_client,
+                                  headers=headers)
+
+    def test_connect_allowed_without_origin_header(self, seeded_app,
+                                                   seeded_client):
+        # Non-browser clients (curl, wscat, test client) send no Origin.
+        client = self._connect(seeded_app, seeded_client)
+        assert client.is_connected(namespace='/terminal') is True
+        client.disconnect(namespace='/terminal')
+
+    def test_connect_allowed_same_origin(self, seeded_app, seeded_client):
+        client = self._connect(seeded_app, seeded_client,
+                               headers={'Origin': 'http://localhost'})
+        assert client.is_connected(namespace='/terminal') is True
+        client.disconnect(namespace='/terminal')
+
+    def test_connect_rejected_foreign_origin(self, seeded_app, seeded_client):
+        client = self._connect(seeded_app, seeded_client,
+                               headers={'Origin': 'http://evil.example'})
+        assert client.is_connected(namespace='/terminal') is False
+
+    def test_connect_allowed_allowlisted_origin(self, seeded_app,
+                                                seeded_client):
+        seeded_app.config['SOCKETIO_ALLOWED_ORIGINS'] = ['http://evil.example']
+        client = self._connect(seeded_app, seeded_client,
+                               headers={'Origin': 'http://evil.example'})
+        assert client.is_connected(namespace='/terminal') is True
+        client.disconnect(namespace='/terminal')
+
+
+class TestTerminalResumeRace:
+    """Review #10: a failed resume must not silently create a second active
+    session for the same user/device."""
+
+    def _client(self, seeded_app, seeded_client):
+        from retrobridge import socketio
+        _login(seeded_client)
+        return SocketIOTestClient(seeded_app, socketio,
+                                  namespace='/terminal',
+                                  flask_test_client=seeded_client)
+
+    def test_failed_resume_of_active_session_is_denied(self, seeded_app,
+                                                       seeded_client,
+                                                       monkeypatch):
+        from retrobridge.terminal import utils as terminal_utils
+
+        session = TerminalSession(user_id=1, device_id=1, port_id=1,
+                                  status='active')
+        seeded_app.db_session.add(session)
+        # Bump the quota so the buggy fall-through would not be masked by
+        # the max-sessions check.
+        user = seeded_app.db_session.get(User, 1)
+        user.max_terminal_sessions = 3
+        seeded_app.db_session.commit()
+
+        # Session bridged on another worker: resume returns None and the
+        # session stays active.  Bridge startup would succeed, so only the
+        # resume check can prevent the duplicate session.
+        monkeypatch.setattr(terminal_utils, 'resume_bridge',
+                            lambda *a, **kw: None)
+        monkeypatch.setattr(terminal_utils, 'start_bridge',
+                            lambda *a, **kw: True)
+
+        sock = self._client(seeded_app, seeded_client)
+        sock.emit('request_session', {'device_id': 1}, namespace='/terminal')
+        time.sleep(0.5)
+
+        received = sock.get_received(namespace='/terminal')
+        denied = [r for r in received if r['name'] == 'session_denied']
+        assert len(denied) >= 1
+
+        active = seeded_app.db_session.query(TerminalSession).filter_by(
+            user_id=1, status='active').all()
+        assert len(active) == 1
+        sock.disconnect(namespace='/terminal')
+
+    def test_resume_that_ends_session_allows_new_session(self, seeded_app,
+                                                         seeded_client,
+                                                         monkeypatch):
+        from retrobridge.terminal import utils as terminal_utils
+
+        old = TerminalSession(user_id=1, device_id=1, port_id=1,
+                              status='active')
+        seeded_app.db_session.add(old)
+        seeded_app.db_session.commit()
+
+        def fake_resume(socketio, sid, session_id):
+            # Grace period expired: resume ends the old session.
+            old.status = 'disconnected'
+            seeded_app.db_session.commit()
+            return None
+
+        monkeypatch.setattr(terminal_utils, 'resume_bridge', fake_resume)
+        monkeypatch.setattr(terminal_utils, 'start_bridge',
+                            lambda *a, **kw: True)
+
+        sock = self._client(seeded_app, seeded_client)
+        sock.emit('request_session', {'device_id': 1}, namespace='/terminal')
+        time.sleep(0.5)
+
+        received = sock.get_received(namespace='/terminal')
+        assert any(r['name'] == 'session_granted' for r in received)
+        assert seeded_app.db_session.query(TerminalSession).count() == 2
+        sock.disconnect(namespace='/terminal')
+
+
 class TestTerminalAPIIntegration:
     """E2E terminal session API endpoints."""
 

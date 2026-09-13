@@ -9,6 +9,7 @@ GET /ready   — Readiness probe: verifies database connectivity,
                acceptable bounds.  Returns 200 when ready, 503 otherwise.
 """
 
+import hmac
 import os
 import shutil
 
@@ -22,9 +23,9 @@ def _db_connectivity(app):
         app.db_session.execute(
             __import__('sqlalchemy', fromlist=['text']).text('SELECT 1')
         )
-        return True, None
-    except Exception as e:
-        return False, str(e)
+        return True
+    except Exception:
+        return False
 
 
 def _dir_exists(path):
@@ -34,10 +35,21 @@ def _dir_exists(path):
 def _disk_usage(path):
     try:
         usage = shutil.disk_usage(path)
-        free_percent = usage.free / usage.total * 100
-        return free_percent, usage.free, usage.total
+        return usage.free / usage.total * 100
     except Exception:
-        return None, None, None
+        return None
+
+
+def _token_ok():
+    from flask import current_app, request
+
+    token = current_app.config.get('HEALTH_TOKEN')
+    if not token:
+        return True
+    provided = (request.headers.get('X-Health-Token')
+                or request.args.get('token')
+                or '')
+    return hmac.compare_digest(token, provided)
 
 
 @health_bp.route('/health')
@@ -55,13 +67,14 @@ def health():
 def ready():
     from flask import current_app
 
+    if not _token_ok():
+        return jsonify({'error': 'Forbidden'}), 403
+
     checks = {}
     all_ok = True
 
-    db_ok, db_err = _db_connectivity(current_app)
+    db_ok = _db_connectivity(current_app)
     checks['database'] = {'ok': db_ok}
-    if db_err:
-        checks['database']['error'] = db_err
     if not db_ok:
         all_ok = False
 
@@ -76,14 +89,14 @@ def ready():
     dir_checks = {}
     for name, path in dirs.items():
         exists = _dir_exists(path)
-        dir_checks[name] = {'ok': exists, 'path': path}
+        dir_checks[name] = {'ok': exists}
         if not exists:
             all_ok = False
     checks['directories'] = dir_checks
 
     disk_check = {}
     root_path = current_app.config.get('UPLOAD_DIR') or current_app.instance_path
-    free_pct, free_bytes, total_bytes = _disk_usage(root_path)
+    free_pct = _disk_usage(root_path)
     if free_pct is not None:
         low_space = free_pct < 5
         if low_space:
@@ -91,8 +104,6 @@ def ready():
         disk_check = {
             'ok': not low_space,
             'free_percent': round(free_pct, 1),
-            'free_bytes': free_bytes,
-            'total_bytes': total_bytes,
         }
     else:
         disk_check = {'ok': True, 'note': 'disk check unavailable'}

@@ -1,6 +1,9 @@
+import time
+from urllib.parse import urlparse
+
 from flask import current_app, request
 from flask_login import current_user
-from flask_socketio import emit, disconnect
+from flask_socketio import emit
 
 from retrobridge.models import Device, DevicePort, TerminalSession
 from retrobridge.terminal import utils
@@ -10,10 +13,30 @@ def _get_sid():
     return getattr(request, 'sid', None)
 
 
+def _origin_allowed():
+    """Reject cross-origin WebSocket connections (cross-site WebSocket
+    hijacking).  Browser clients send an Origin header: it must match the
+    request host or be explicitly allowlisted.  Non-browser clients send
+    no Origin and are allowed."""
+    environ = getattr(request, 'environ', None) or {}
+    origin = environ.get('HTTP_ORIGIN')
+    if not origin:
+        return True
+
+    host = environ.get('HTTP_HOST') or environ.get('SERVER_NAME') or ''
+    if urlparse(origin).netloc == host:
+        return True
+
+    allowed = current_app.config.get('SOCKETIO_ALLOWED_ORIGINS') or []
+    return origin in allowed
+
+
 def register_socketio_events(socketio):
     @socketio.on('connect', namespace='/terminal')
     def handle_connect():
         if not current_user.is_authenticated:
+            return False
+        if not _origin_allowed():
             return False
 
     @socketio.on('disconnect', namespace='/terminal')
@@ -65,6 +88,14 @@ def register_socketio_events(socketio):
                     'cols': 80,
                     'rows': 24,
                 })
+                return
+
+            # Resume failed.  Deny only if the session is still active (e.g.
+            # bridged on another worker); otherwise the resume ended it
+            # (grace period expired) and a fresh session may be created below.
+            current_app.db_session.refresh(existing_session)
+            if existing_session.status == 'active':
+                emit('session_denied', {'reason': 'Session is already active'})
                 return
 
         # Check user session quota
@@ -162,6 +193,3 @@ def register_socketio_events(socketio):
     # Start the timeout monitor
     utils.start_timeout_monitor(socketio)
     utils.start_suspended_cleaner(socketio)
-
-
-import time  # noqa: E402

@@ -131,14 +131,21 @@ def new():
             return render_template('jobs/new.html', **ctx)
 
         filename = file.filename or 'program.bin'
+        # Transfer command overrides are admin-only: they run arbitrary
+        # commands on the physical device.  Strip them for non-admins.
+        pre_cmds = form.pre_transfer_cmds.data or ''
+        post_cmds = form.post_transfer_cmds.data or ''
+        if not current_user.is_admin:
+            pre_cmds = ''
+            post_cmds = ''
         try:
             job = create_job(
                 current_app.db_session, current_user.id, device_id,
                 filename, file, current_app.config['UPLOAD_DIR'],
                 priority=form.priority.data or 0,
                 newline_mode=form.newline_mode.data or '',
-                pre_transfer_cmds=form.pre_transfer_cmds.data or '',
-                post_transfer_cmds=form.post_transfer_cmds.data or '',
+                pre_transfer_cmds=pre_cmds,
+                post_transfer_cmds=post_cmds,
             )
         except ValueError as e:
             flash(str(e), 'danger')
