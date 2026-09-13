@@ -5,7 +5,7 @@ from pathlib import Path
 
 from werkzeug.utils import secure_filename
 
-from retrobridge.models import Device, Job
+from retrobridge.models import Device, Job, User
 
 ALLOWED_EXTENSIONS = {'bin', 'hex', 'obj', 'asm', 's', 'txt'}
 TEXT_EXTENSIONS = {'txt', 'asm', 's', 'hex'}
@@ -177,6 +177,22 @@ def create_job(db_session, user_id, device_id, filename, file_obj,
         raise ValueError('Device does not exist.')
     if not device.is_enabled:
         raise ValueError('Device is currently disabled.')
+
+    # Re-check quota and rate limit at creation time: the route's earlier
+    # checks are advisory and two concurrent submissions could both pass.
+    user = db_session.get(User, user_id)
+    if user is None:
+        raise ValueError('User does not exist.')
+    _, _, exceeded = get_user_quota(db_session, user)
+    if exceeded:
+        raise ValueError(
+            'You have reached your maximum number of queued/running jobs.'
+        )
+    rate_limited, max_per_hour = check_rate_limit(db_session, user_id)
+    if rate_limited:
+        raise ValueError(
+            f'Rate limit reached: {max_per_hour} jobs per hour.'
+        )
 
     safe_name = secure_filename(filename or 'program.bin')
 

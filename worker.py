@@ -104,11 +104,10 @@ def build_engine():
 
     from retrobridge.sqlite_provision import configure_sqlite_engine
 
-    env = os.environ.get('FLASK_ENV', 'development')
-    if env == 'production' and hasattr(config.ProdConfig, 'SQLITE_PRAGMAS'):
-        pragma_config = {'SQLITE_PRAGMAS': config.ProdConfig.SQLITE_PRAGMAS}
-    else:
-        pragma_config = None
+    # Apply production pragmas regardless of FLASK_ENV: an unset env var
+    # used to silently skip WAL/busy-timeout tuning for a prod worker.
+    pragma_config = {'SQLITE_PRAGMAS': config.ProdConfig.SQLITE_PRAGMAS} \
+        if hasattr(config.ProdConfig, 'SQLITE_PRAGMAS') else None
 
     configure_sqlite_engine(engine, pragma_config)
 
@@ -395,6 +394,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
 
     serial_params = get_serial_params(port)
     ser = None
+    transport_opened = False
     transfer_session = session_factory() if session_factory else None
 
     try:
@@ -408,6 +408,7 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
             logger.info(f'Opening {transport} connection: {serial_params["port"]}')
 
         ser = open_transport(port)
+        transport_opened = True
         time.sleep(0.5)
 
         with open(output_path, 'a', encoding='utf-8', errors='replace') as out_f:
@@ -589,7 +590,8 @@ def run_job_on_device(job: Job, port: DevicePort, logger: logging.Logger,
                 transfer_session.close()
             except Exception:
                 pass
-        logger.info(f'Serial port closed: {port.dev_path}')
+        if transport_opened:
+            logger.info(f'Serial port closed: {port.dev_path}')
 
 
 def worker_loop(device_name: str, poll_interval: int = 5):
@@ -621,15 +623,6 @@ def worker_loop(device_name: str, poll_interval: int = 5):
                 session.close()
                 time.sleep(poll_interval)
                 continue
-
-            # Check for force-canceled jobs
-            canceled = (
-                session.query(Job)
-                .filter_by(device_id=device.id, status='canceled')
-                .all()
-            )
-            for cj in canceled:
-                logger.info(f'Job #{cj.id} was force-canceled')
 
             # Cancel any queued jobs with cancel_requested that weren't claimed.
             # This must run regardless of whether a job is claimed this cycle.

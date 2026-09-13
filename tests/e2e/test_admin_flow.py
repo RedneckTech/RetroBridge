@@ -629,6 +629,52 @@ class TestAdminSessions:
         assert resp.status_code == 403
 
 
+class TestAdminQueryEfficiency:
+    """Review #24: admin pages must not issue per-row queries (N+1)."""
+
+    def _count_queries(self, admin_app, admin_client, url):
+        from sqlalchemy import event
+
+        count = {'n': 0}
+
+        def on_execute(*a, **kw):
+            count['n'] += 1
+
+        event.listen(admin_app.db_engine, 'before_cursor_execute', on_execute)
+        try:
+            resp = admin_client.get(url)
+        finally:
+            event.remove(admin_app.db_engine, 'before_cursor_execute',
+                         on_execute)
+        assert resp.status_code == 200
+        return count['n']
+
+    def test_dashboard_query_count_is_bounded(self, admin_app, admin_client):
+        db = admin_app.db_session
+        for n in range(8):
+            d = Device(name=f'dev{n}')
+            db.add(d)
+            db.flush()
+            db.add(Job(user_id=1, device_id=d.id,
+                       original_filename=f'j{n}.bin', status='queued'))
+            db.add(TerminalSession(user_id=1, device_id=d.id, port_id=2,
+                                   status='active'))
+        db.commit()
+
+        n = self._count_queries(admin_app, admin_client, '/admin/')
+        assert n < 25, f'{n} queries issued for dashboard'
+
+    def test_users_page_query_count_is_bounded(self, admin_app, admin_client):
+        db = admin_app.db_session
+        for n in range(15):
+            db.add(User(username=f'bulkuser{n}', email=f'b{n}@example.com',
+                        password_hash=generate_password_hash('pw')))
+        db.commit()
+
+        n = self._count_queries(admin_app, admin_client, '/admin/users')
+        assert n < 20, f'{n} queries issued for users page'
+
+
 class TestAdminSettings:
     """SDD 10.3: Admin settings management."""
 

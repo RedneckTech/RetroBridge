@@ -283,6 +283,53 @@ class TestTelnetNegotiate:
             t.join(timeout=2)
 
 
+class TestTelnetNegotiateSplit:
+    """Review #21: IAC sequences split across recv() calls must behave like
+    their single-chunk equivalents."""
+
+    def _run_split(self, first, second, drain=True):
+        """Send `first`, run negotiation, and deliver `second` mid-loop."""
+        a, b = socket.socketpair()
+        a.settimeout(1.0)
+        b.settimeout(1.0)
+
+        def sender():
+            time.sleep(0.3)
+            b.sendall(second)
+            if drain:
+                try:
+                    b.recv(1024)
+                except OSError:
+                    pass
+
+        b.sendall(first)
+        t = threading.Thread(target=sender, daemon=True)
+        t.start()
+        try:
+            from retrobridge.transport import _telnet_negotiate
+            out = _telnet_negotiate(a, timeout=2)
+        finally:
+            t.join(timeout=3)
+            for s in (a, b):
+                try:
+                    s.close()
+                except OSError:
+                    pass
+        return bytes(out)
+
+    def test_escaped_iac_split_preserves_literal_and_data(self):
+        # "IAC IAC X" split as "IAC" | "IAC X" → literal 255 + 'X'.
+        assert self._run_split(bytes([255]), bytes([255, 88])) == bytes([255, 88])
+
+    def test_will_command_split_is_answered_not_literal(self):
+        # "IAC WILL 1" split → respond IAC DONT 1, no data out.
+        assert self._run_split(bytes([255]), bytes([251, 1])) == b''
+
+    def test_unknown_command_split_is_dropped_like_single_chunk(self):
+        # In-chunk "IAC X Y" drops the pair and keeps Y; split must match.
+        assert self._run_split(bytes([255]), bytes([88, 89])) == b'Y'
+
+
 class TestUnknownTransport:
     def test_unknown_transport_raises(self):
         port = MockPort(transport='bluetooth')

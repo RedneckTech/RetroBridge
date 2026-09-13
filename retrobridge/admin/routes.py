@@ -1,5 +1,7 @@
 from flask import render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
 from retrobridge.admin import admin_bp
 from retrobridge.auth.utils import admin_required
@@ -50,17 +52,31 @@ def dashboard():
         'registration_open': get_bool('REGISTRATION_OPEN'),
     }
 
-    devices = db.query(Device).order_by(Device.name).all()
+    devices = (db.query(Device)
+               .options(selectinload(Device.ports))
+               .order_by(Device.name).all())
+
+    session_counts = dict(
+        db.query(TerminalSession.device_id,
+                 func.count(TerminalSession.id))
+        .filter(TerminalSession.status == 'active')
+        .group_by(TerminalSession.device_id).all())
+    queued_counts = dict(
+        db.query(Job.device_id, func.count(Job.id))
+        .filter(Job.status == 'queued')
+        .group_by(Job.device_id).all())
+    running_counts = dict(
+        db.query(Job.device_id, func.count(Job.id))
+        .filter(Job.status == 'running')
+        .group_by(Job.device_id).all())
+
     device_stats = []
     for d in devices:
         device_stats.append({
             'device': d,
-            'active_sessions': db.query(TerminalSession).filter_by(
-                device_id=d.id, status='active').count(),
-            'queued_jobs': db.query(Job).filter_by(
-                device_id=d.id, status='queued').count(),
-            'running_jobs': db.query(Job).filter_by(
-                device_id=d.id, status='running').count(),
+            'active_sessions': session_counts.get(d.id, 0),
+            'queued_jobs': queued_counts.get(d.id, 0),
+            'running_jobs': running_counts.get(d.id, 0),
             'enabled_ports': len([p for p in d.ports if p.is_enabled]),
         })
 
@@ -76,17 +92,6 @@ def dashboard():
 
 # -- User Management --
 
-def _user_stats(db_session, user):
-    return {
-        'total_jobs': db_session.query(Job).filter_by(user_id=user.id).count(),
-        'running_jobs': db_session.query(Job)
-            .filter_by(user_id=user.id, status='running').count(),
-        'completed_jobs': db_session.query(Job)
-            .filter_by(user_id=user.id, status='completed').count(),
-        'active_sessions': db_session.query(TerminalSession)
-            .filter_by(user_id=user.id, status='active').count(),
-    }
-
 
 @admin_bp.route('/users')
 @login_required
@@ -97,7 +102,8 @@ def users():
     per_page = 20
     search = request.args.get('search', '').strip()
 
-    query = current_app.db_session.query(User).order_by(User.username)
+    db = current_app.db_session
+    query = db.query(User).order_by(User.username)
     if search:
         query = query.filter(
             User.username.ilike(f'%{search}%') |
@@ -106,9 +112,35 @@ def users():
     total = query.count()
     users_list = query.offset((page - 1) * per_page).limit(per_page).all()
 
-    user_stats = {}
-    for u in users_list:
-        user_stats[u.id] = _user_stats(current_app.db_session, u)
+    # Batch per-user stats instead of one query per user per metric (N+1).
+    user_ids = [u.id for u in users_list]
+    job_totals = dict(
+        db.query(Job.user_id, func.count(Job.id))
+        .filter(Job.user_id.in_(user_ids))
+        .group_by(Job.user_id).all())
+    running_jobs = dict(
+        db.query(Job.user_id, func.count(Job.id))
+        .filter(Job.user_id.in_(user_ids), Job.status == 'running')
+        .group_by(Job.user_id).all())
+    completed_jobs = dict(
+        db.query(Job.user_id, func.count(Job.id))
+        .filter(Job.user_id.in_(user_ids), Job.status == 'completed')
+        .group_by(Job.user_id).all())
+    active_sessions = dict(
+        db.query(TerminalSession.user_id, func.count(TerminalSession.id))
+        .filter(TerminalSession.user_id.in_(user_ids),
+                TerminalSession.status == 'active')
+        .group_by(TerminalSession.user_id).all())
+
+    user_stats = {
+        u.id: {
+            'total_jobs': job_totals.get(u.id, 0),
+            'running_jobs': running_jobs.get(u.id, 0),
+            'completed_jobs': completed_jobs.get(u.id, 0),
+            'active_sessions': active_sessions.get(u.id, 0),
+        }
+        for u in users_list
+    }
 
     return render_template('admin/users.html', users=users_list, total=total,
                            page=page, pages=(total + per_page - 1) // per_page,
@@ -211,9 +243,15 @@ def delete_user(user_id):
     user = current_app.db_session.get(User, user_id)
     if user:
         from retrobridge.api.routes import _delete_user_directories
-        _delete_user_directories(current_app, user.id)
+        # Collect file locations before the rows are gone; delete files
+        # only after the commit succeeds.
+        jobs = (current_app.db_session.query(Job)
+                .filter_by(user_id=user.id).all())
+        sessions = (current_app.db_session.query(TerminalSession)
+                    .filter_by(user_id=user.id).all())
         current_app.db_session.delete(user)
         current_app.db_session.commit()
+        _delete_user_directories(current_app, jobs, sessions)
         flash('User deleted.', 'info')
 
     return redirect(url_for('admin.users'))

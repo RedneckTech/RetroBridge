@@ -47,6 +47,9 @@ class BaseConfig:
     SESSION_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
+    REMEMBER_COOKIE_SECURE = True
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SAMESITE = 'Lax'
     PERMANENT_SESSION_LIFETIME = timedelta(hours=12)
     SQLALCHEMY_ENGINE_POOLCLASS = 'NullPool'
     SQLALCHEMY_ENGINE_OPTIONS = {
@@ -98,6 +101,7 @@ class DevConfig(BaseConfig):
     DEBUG = True
     TESTING = False
     SESSION_COOKIE_SECURE = False
+    REMEMBER_COOKIE_SECURE = False
     SOCKETIO_ASYNC_MODE = 'threading'
     SQLALCHEMY_DATABASE_URI = get_database_uri()
 
@@ -115,6 +119,7 @@ class TestConfig(BaseConfig):
     DEBUG = False
     TESTING = True
     SESSION_COOKIE_SECURE = False
+    REMEMBER_COOKIE_SECURE = False
     SOCKETIO_ASYNC_MODE = 'threading'
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     SQLALCHEMY_ENGINE_POOLCLASS = 'StaticPool'

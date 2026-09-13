@@ -80,6 +80,10 @@ def _is_throttled(db_session, ip_address, username):
 def _is_safe_redirect_url(target):
     if not target:
         return False
+    # Browsers normalize a leading backslash in Location to '//', turning
+    # '\evil.com' into an external redirect — reject outright.
+    if '\\' in target:
+        return False
     if target.startswith('/') and not target.startswith('//'):
         return True
     ref = urlparse(request.host_url)
@@ -290,10 +294,16 @@ def delete_account():
     if user:
         if user.email_notify_security:
             notify_account_deleted(user)
-        _delete_user_directories(current_app, user.id)
+        # Collect file locations before the rows are gone; delete files
+        # only after the commit succeeds.
+        jobs = (current_app.db_session.query(Job)
+                .filter_by(user_id=user.id).all())
+        sessions = (current_app.db_session.query(TerminalSession)
+                    .filter_by(user_id=user.id).all())
         logout_user()
         current_app.db_session.delete(user)
         current_app.db_session.commit()
+        _delete_user_directories(current_app, jobs, sessions)
         flash('Your account has been deleted.', 'info')
     return redirect(url_for('auth.login'))
 

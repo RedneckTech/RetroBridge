@@ -12,17 +12,17 @@ GET /ready   — Readiness probe: verifies database connectivity,
 import hmac
 import os
 import shutil
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify
+from sqlalchemy import text
 
 health_bp = Blueprint('health', __name__)
 
 
 def _db_connectivity(app):
     try:
-        app.db_session.execute(
-            __import__('sqlalchemy', fromlist=['text']).text('SELECT 1')
-        )
+        app.db_session.execute(text('SELECT 1'))
         return True
     except Exception:
         return False
@@ -57,9 +57,7 @@ def health():
     return jsonify({
         'status': 'ok',
         'service': 'retrobridge',
-        'timestamp': __import__('datetime').datetime.now(
-            __import__('datetime').timezone.utc
-        ).isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
     })
 
 
@@ -122,9 +120,7 @@ def ready():
     resp = {
         'status': 'ready' if all_ok else 'degraded',
         'service': 'retrobridge',
-        'timestamp': __import__('datetime').datetime.now(
-            __import__('datetime').timezone.utc
-        ).isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'checks': checks,
     }
 

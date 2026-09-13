@@ -184,25 +184,32 @@ def _telnet_negotiate(sock, timeout=2):
         while i < len(data):
             b = data[i]
             if pending_iac is not None:
-                cmd = pending_iac
-                pending_iac = None
-                if cmd in (WILL, WONT, DO, DONT):
-                    opt = data[i] if i < len(data) else 0
-                    if cmd == WILL:
-                        sock.sendall(bytes([IAC, DONT, opt]))
-                    elif cmd == DO:
-                        sock.sendall(bytes([IAC, WONT, opt]))
+                # The previous recv chunk ended with a lone IAC.  Only
+                # "IAC IAC" is an escaped literal 255; any other following
+                # byte is a command and must be handled like the in-chunk
+                # path below.
+                if b == IAC:
+                    out.append(IAC)
                     i += 1
-                elif cmd == SB:
-                    # Skip subnegotiation until IAC SE.
+                elif b in (WILL, WONT, DO, DONT):
+                    opt = data[i + 1] if i + 1 < len(data) else 0
+                    if b == WILL:
+                        sock.sendall(bytes([IAC, DONT, opt]))
+                    elif b == DO:
+                        sock.sendall(bytes([IAC, WONT, opt]))
+                    i += 2
+                elif b == SB:
+                    i += 1
                     while i < len(data):
                         if data[i] == IAC and i + 1 < len(data) and data[i + 1] == SE:
                             i += 2
                             break
                         i += 1
-                # IAC IAC is escaped literal 255; keep it as real data.
-                elif cmd == IAC:
-                    out.append(IAC)
+                else:
+                    # Unknown command byte: the IAC was already consumed in
+                    # the previous chunk, so only this byte is dropped.
+                    i += 1
+                pending_iac = None
                 continue
 
             if b == IAC:
