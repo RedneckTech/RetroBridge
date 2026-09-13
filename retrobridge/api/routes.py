@@ -73,8 +73,8 @@ def job_output(job_id):
     if not job.output_path:
         return jsonify({'lines': []})
 
-    tail = request.args.get('tail', type=int)
-    if tail is not None and tail > MAX_OUTPUT_TAIL:
+    tail = request.args.get('tail', MAX_OUTPUT_TAIL, type=int)
+    if tail is None or tail < 1 or tail > MAX_OUTPUT_TAIL:
         tail = MAX_OUTPUT_TAIL
     lines = jobs_utils.read_output_tail(job.output_path, tail)
     return jsonify({'lines': lines})
@@ -308,14 +308,11 @@ def job_events(job_id):
     """Server-Sent Events stream for live job status and output updates.
 
     NOTE: This endpoint holds a response stream open for the duration of the
-    job. When running under a synchronous gunicorn worker, that ties up one
-    worker thread per connected client. Run the app with an async worker class
-    (eventlet/gevent) in production, e.g.:
-
-        gunicorn -k eventlet -w 4 -b 127.0.0.1:5000 wsgi_eventlet:app
-
-    The poll interval and optional maximum connection lifetime are configurable
-    via ``JOB_EVENTS_POLL_INTERVAL`` and ``JOB_EVENTS_MAX_LIFETIME``.
+    job. Each open stream occupies one gthread worker thread; gunicorn is
+    configured with enough threads per worker to accommodate this
+    (run_prod.sh). The poll interval and maximum connection lifetime are
+    configurable via ``JOB_EVENTS_POLL_INTERVAL`` and
+    ``JOB_EVENTS_MAX_LIFETIME``.
     """
     from flask import current_app
 
@@ -326,13 +323,6 @@ def job_events(job_id):
 
     poll_interval = current_app.config.get('JOB_EVENTS_POLL_INTERVAL', 1.0)
     max_lifetime = current_app.config.get('JOB_EVENTS_MAX_LIFETIME')
-
-    # Use eventlet/gevent sleep when available so the greenlet yields instead
-    # of blocking an OS thread.
-    try:
-        from eventlet import sleep as sse_sleep
-    except Exception:
-        sse_sleep = time.sleep
 
     def generate():
         last_status = job.status
@@ -371,7 +361,7 @@ def job_events(job_id):
                 return
 
             yield f": heartbeat\n\n"
-            sse_sleep(poll_interval)
+            time.sleep(poll_interval)
 
     return Response(
         stream_with_context(generate()),

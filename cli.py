@@ -128,17 +128,33 @@ def register_cli_commands(app):
         click.echo('Database tables created.')
 
     @app.cli.command('seed')
-    def seed():
+    @click.option('--admin-password', default=None,
+                  help='Password for the admin user (required when '
+                       'FLASK_ENV=production).')
+    def seed(admin_password):
         from werkzeug.security import generate_password_hash
         from retrobridge.models import User, Device, DevicePort, AdminSetting
 
         s = app.db_session
 
+        is_production = (
+            os.environ.get('FLASK_ENV') == 'production'
+            or (app.config.get('DEBUG') is False
+                and app.config.get('TESTING') is False)
+        )
+
         if not s.get(User, 1):
+            if is_production and not admin_password:
+                raise click.ClickException(
+                    'Refusing to seed the default admin/admin user in '
+                    'production. Re-run with an explicit password: '
+                    'flask seed --admin-password <password>'
+                )
             admin = User(
                 username='admin',
                 email='admin@retrobridge.local',
-                password_hash=generate_password_hash('admin'),
+                password_hash=generate_password_hash(
+                    admin_password if admin_password else 'admin'),
                 full_name='Administrator',
                 is_admin=True,
                 max_queued_jobs=10,
@@ -208,7 +224,8 @@ def register_cli_commands(app):
                 s.add(AdminSetting(key=key, value=value, description=desc))
 
         s.commit()
-        click.echo('Database seeded with default devices and admin user (admin/admin).')
+        creds = 'admin/admin' if not admin_password else 'admin/<your password>'
+        click.echo(f'Database seeded with default devices and admin user ({creds}).')
 
     @app.cli.command('run-worker')
     @click.option('--device', required=True, help='Device name (centurion or pdp11)')

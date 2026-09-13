@@ -258,15 +258,29 @@ def _open_telnet(address):
 # ── Socket wrapper ───────────────────────────────────────────────────────────
 
 class _SocketWrapper:
-    """Minimal pyserial-like interface over a raw TCP socket."""
+    """Minimal pyserial-like interface over a raw TCP socket.
+
+    A closed peer (EOF) or a failed write raises ``serial.SerialException``
+    so callers tear the session down instead of hanging until an idle
+    timeout, mirroring how real serial errors behave.
+    """
 
     def __init__(self, sock, name='<socket>'):
         self._sock = sock
         self._name = name
         self._open = True
         self._buf = b''
+        self._eof = False
         self.fd = sock.fileno()
         self.is_open = True
+
+    def _raise_closed(self):
+        self._eof = True
+        self._open = False
+        self.is_open = False
+        raise SerialException(
+            f'{getattr(self, "_name", "<socket>")}: connection closed'
+        )
 
     @property
     def in_waiting(self):
@@ -279,6 +293,8 @@ class _SocketWrapper:
         buf = getattr(self, '_buf', b'')
         if buf:
             return len(buf)
+        if getattr(self, '_eof', False):
+            self._raise_closed()
         try:
             r, _, _ = select.select([self._sock], [], [], 0)
             if not r:
@@ -286,11 +302,19 @@ class _SocketWrapper:
             chunk = self._sock.recv(4096)
             if chunk:
                 self._buf = buf + chunk
-            return len(self._buf)
-        except (OSError, ValueError, TypeError, AttributeError):
+                return len(self._buf)
+            # Socket readable but no data: the peer closed the connection.
+            self._raise_closed()
+        except SerialException:
+            raise
+        except BlockingIOError:
             return 0
+        except (OSError, ValueError, TypeError, AttributeError):
+            self._raise_closed()
 
     def read(self, size=1):
+        if self._eof:
+            self._raise_closed()
         try:
             if self._buf:
                 data = self._buf[:size] if len(self._buf) >= size else self._buf
@@ -305,16 +329,30 @@ class _SocketWrapper:
                 chunk = self._sock.recv(size)
                 if chunk:
                     data += chunk
+                elif data:
+                    self._eof = True
+                    return data
+                else:
+                    self._raise_closed()
             return data
-        except (BlockingIOError, OSError):
-            return b''
+        except SerialException:
+            raise
+        except BlockingIOError:
+            return data
+        except OSError:
+            self._raise_closed()
 
     def write(self, data):
+        if self._eof:
+            self._raise_closed()
         try:
             self._sock.sendall(data)
             return len(data)
-        except OSError:
-            return 0
+        except OSError as e:
+            self._eof = True
+            self._open = False
+            self.is_open = False
+            raise SerialException(f'{self._name}: write failed: {e}') from e
 
     def close(self):
         if not self._open:

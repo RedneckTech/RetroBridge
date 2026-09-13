@@ -675,6 +675,8 @@ def settings():
 
     if request.method == 'GET':
         for field_name, (key, _) in SETTING_MAP.items():
+            if field_name == 'email_smtp_password':
+                continue  # never round-trip the SMTP password into the form
             setting = current_app.db_session.get(AdminSetting, key)
             if setting and field_name in form._fields:
                 converter = SETTING_REVERSE.get(key, str)
@@ -683,6 +685,9 @@ def settings():
         for field_name, (key, formatter) in SETTING_MAP.items():
             if field_name not in form._fields:
                 continue
+            if (field_name == 'email_smtp_password'
+                    and not form._fields[field_name].data):
+                continue  # blank = keep the current password
             value = str(formatter(form._fields[field_name].data))
             setting = current_app.db_session.get(AdminSetting, key)
             if setting:

@@ -1,6 +1,5 @@
 """Job utility functions — create, query, cancel, and rate-limit jobs."""
 
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -264,12 +263,50 @@ def get_device_choices(db_session):
 
 
 def read_output_tail(output_path, tail=None):
+    """Return output lines, optionally only the last ``tail`` lines.
+
+    Reads are bounded: for a tail request only the end of the file is
+    loaded.  Decoding uses errors='replace' so non-UTF-8 device output can
+    never raise (and 500 the output endpoint).
+    """
     try:
-        with open(output_path, 'r') as f:
-            lines = f.readlines()
-            if tail:
-                lines = lines[-tail:] if len(lines) > tail else lines
-            return [l.rstrip('\n') for l in lines]
+        if not tail or tail < 1:
+            with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
+                return [line.rstrip('\n') for line in f]
+    except FileNotFoundError:
+        return []
+
+    try:
+        with open(output_path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            if size == 0:
+                return []
+
+            pos = size
+            chunks = []
+            newlines = 0
+            block = 8192
+            while pos > 0 and newlines <= tail:
+                step = min(block, pos)
+                pos -= step
+                f.seek(pos)
+                chunk = f.read(step)
+                chunks.insert(0, chunk)
+                newlines += chunk.count(b'\n')
+
+            data = b''.join(chunks)
+            text = data.decode('utf-8', errors='replace')
+            # Match text-mode universal newline behavior of the old code.
+            text = text.replace('\r\n', '\n').replace('\r', '\n')
+            lines = text.split('\n')
+            if pos > 0:
+                lines.pop(0)  # first line is partial (we started mid-line)
+            if lines and lines[-1] == '' and text.endswith('\n'):
+                lines.pop()
+            if len(lines) > tail:
+                lines = lines[-tail:]
+            return [line.rstrip('\n') for line in lines]
     except FileNotFoundError:
         return []
 

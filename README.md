@@ -32,7 +32,7 @@ Currently targets the **Centurion CPU-6** and **DEC PDP-11/44**, both multi-user
 
 ```
 Browser ──HTTPS──▶ nginx ──HTTP──▶ gunicorn ──▶ Flask App ──▶ SQLite (WAL)
-                    │  └─WebSocket──▶ Flask-SocketIO (eventlet)
+                    │  └─WebSocket──▶ Flask-SocketIO (threading)
                     │  └─SSE stream──▶ /api/jobs/<id>/events
                     │
 Worker (Centurion) ──transport──▶ Centurion CPU-6 (job ports)
@@ -43,7 +43,7 @@ Emulated Systems   ──TCP/Telnet──▶ SIMH / CPU7Plus (production)
 transport ∈ { serial, pty, tcp, telnet, rfc2217 }
 ```
 
-Workers communicate with the Flask app **only through the SQLite database** (poll/claim/update pattern). Terminal sessions bridge WebSocket ↔ serial/network in real time via eventlet green threads. Job status and output stream to browsers via Server-Sent Events.
+Workers communicate with the Flask app **only through the SQLite database** (poll/claim/update pattern). Terminal sessions bridge WebSocket ↔ serial/network in real time. Job status and output stream to browsers via Server-Sent Events.
 
 ---
 
@@ -56,7 +56,7 @@ Workers communicate with the Flask app **only through the SQLite database** (pol
 | Serial I/O     | pyserial 3.5, xmodem 0.4, raw sockets (TCP/Telnet)  |
 | Live Updates   | Server-Sent Events (job status/output streaming)     |
 | Frontend       | Bootstrap 5, Jinja2, xterm.js 5.x                   |
-| WebSocket      | Flask-SocketIO + eventlet                           |
+| WebSocket      | Flask-SocketIO (threading mode)                     |
 | WSGI Server    | gunicorn                                            |
 | Reverse Proxy  | nginx (TLS termination, WebSocket proxying)         |
 | Process Mgmt   | systemd, run.sh (dev convenience)                   |
