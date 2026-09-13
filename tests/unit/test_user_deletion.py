@@ -100,3 +100,47 @@ def test_delete_user_removes_files(client, app, db_session, tmp_path):
     assert not up.exists()
     assert not out.exists()
     assert not sess.exists()
+
+
+def test_delete_user_keeps_files_when_commit_fails(client, app, db_session,
+                                                   tmp_path, monkeypatch):
+    import pytest
+    _login_admin(client, db_session)
+
+    device = Device(name='deldev3')
+    db_session.add(device)
+    db_session.flush()
+    port = DevicePort(device_id=device.id, port_label='TTY0',
+                      dev_path='/tmp/tty0', purpose='job_queue')
+    db_session.add(port)
+    db_session.flush()
+
+    user = User(username='deleteme3', email='del3@example.com',
+                password_hash=generate_password_hash('Pass123'))
+    db_session.add(user)
+    db_session.flush()
+
+    upload_dir = tmp_path / 'uploads'
+    app.config['UPLOAD_DIR'] = str(upload_dir)
+    app.config['OUTPUT_DIR'] = str(tmp_path / 'outputs')
+    app.config['SESSION_LOG_DIR'] = str(tmp_path / 'session_logs')
+
+    job = Job(user_id=user.id, device_id=device.id, port_id=port.id,
+              original_filename='del.bin', stored_filename='job-999/del.bin')
+    db_session.add(job)
+    db_session.commit()
+
+    up = upload_dir / 'job-999'
+    up.mkdir(parents=True)
+    (up / 'del.bin').write_text('data')
+
+    def failing_commit():
+        raise RuntimeError('commit boom')
+    monkeypatch.setattr(db_session, 'commit', failing_commit)
+
+    with pytest.raises(RuntimeError):
+        client.delete(f'/api/admin/users/{user.id}')
+
+    # Files must still exist: cleanup happens only after a successful commit.
+    assert up.exists()
+    assert (up / 'del.bin').exists()

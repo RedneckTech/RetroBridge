@@ -59,6 +59,13 @@ def register_socketio_events(socketio):
             emit('session_denied', {'reason': 'Not authenticated'})
             return
 
+        # Mirror the HTTP maintenance gate: sessions must not start while
+        # the site is in maintenance mode (admins may still connect).
+        from retrobridge.admin.settings_utils import get_bool
+        if get_bool('MAINTENANCE_MODE') and not current_user.is_admin:
+            emit('session_denied', {'reason': 'Maintenance mode is active'})
+            return
+
         device_id = data.get('device_id')
         device = current_app.db_session.get(Device, device_id)
         if not device or not device.is_enabled:

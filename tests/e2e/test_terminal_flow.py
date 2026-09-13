@@ -310,6 +310,23 @@ class TestTerminalResumeRace:
         assert seeded_app.db_session.query(TerminalSession).count() == 2
         sock.disconnect(namespace='/terminal')
 
+    def test_request_session_denied_during_maintenance(self, seeded_app,
+                                                       seeded_client):
+        from retrobridge.models import AdminSetting
+
+        seeded_app.db_session.add(AdminSetting(
+            key='MAINTENANCE_MODE', value='1', description='test'))
+        seeded_app.db_session.commit()
+
+        sock = self._client(seeded_app, seeded_client)
+        sock.emit('request_session', {'device_id': 1}, namespace='/terminal')
+        time.sleep(0.5)
+
+        received = sock.get_received(namespace='/terminal')
+        assert any(r['name'] == 'session_denied' for r in received)
+        assert seeded_app.db_session.query(TerminalSession).count() == 0
+        sock.disconnect(namespace='/terminal')
+
 
 class TestTerminalAPIIntegration:
     """E2E terminal session API endpoints."""

@@ -54,3 +54,14 @@ def test_prod_csp_allows_inline_styles_and_gravatar():
     assert "www.gravatar.com" in csp
     assert "script-src" in csp
     assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
+
+
+def test_remember_cookie_attributes():
+    from config import DevConfig, ProdConfig, TestConfig
+
+    assert ProdConfig.REMEMBER_COOKIE_SECURE is True
+    assert ProdConfig.REMEMBER_COOKIE_HTTPONLY is True
+    assert ProdConfig.REMEMBER_COOKIE_SAMESITE == "Lax"
+    # HTTP dev/test must not set Secure or "remember me" breaks.
+    assert DevConfig.REMEMBER_COOKIE_SECURE is False
+    assert TestConfig.REMEMBER_COOKIE_SECURE is False

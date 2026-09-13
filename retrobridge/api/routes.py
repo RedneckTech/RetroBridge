@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import jsonify, request, Response, stream_with_context
@@ -197,7 +198,7 @@ def active_sessions():
 def my_sessions():
     """Return current user's active terminal sessions for dashboard polling."""
     from flask import current_app
-    now_utc = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+    now_utc = datetime.now(timezone.utc)
     sessions = (
         current_app.db_session.query(TerminalSession)
         .filter_by(user_id=current_user.id, status='active')
@@ -210,7 +211,7 @@ def my_sessions():
             'device_name': s.device.display_name or s.device.name if s.device else None,
             'port_label': s.port.port_label if s.port else None,
             'elapsed_seconds': int((now_utc - (
-                s.connected_at.replace(tzinfo=__import__('datetime').timezone.utc)
+                s.connected_at.replace(tzinfo=timezone.utc)
                 if s.connected_at and s.connected_at.tzinfo is None
                 else s.connected_at
             )).total_seconds()) if s.connected_at else 0,
@@ -268,21 +269,27 @@ def delete_user(user_id):
     if not user:
         return jsonify({'success': False, 'message': 'User not found'}), 404
 
-    _delete_user_directories(current_app, user.id)
+    # Collect file locations while the rows still exist, but delete files
+    # only after the commit succeeds — otherwise a failed commit leaves
+    # rows whose files are already gone.
+    jobs = current_app.db_session.query(Job).filter_by(user_id=user.id).all()
+    sessions = (current_app.db_session.query(TerminalSession)
+                .filter_by(user_id=user.id).all())
 
     current_app.db_session.delete(user)
     current_app.db_session.commit()
+
+    _delete_user_directories(current_app, jobs, sessions)
     return jsonify({'success': True})
 
 
-def _delete_user_directories(app, user_id):
+def _delete_user_directories(app, jobs, sessions):
     """Remove a user's uploads, outputs, and session logs from disk.
 
     The cascade handles related DB rows; job/session files are tied to those
-    IDs, so we enumerate the user's jobs and sessions and delete their dirs.
+    IDs, so the caller passes the user's jobs and sessions (fetched before
+    the rows were deleted) and their dirs are removed here.
     """
-    jobs = app.db_session.query(Job).filter_by(user_id=user_id).all()
-    sessions = app.db_session.query(TerminalSession).filter_by(user_id=user_id).all()
     upload_dir = app.config.get('UPLOAD_DIR')
     output_dir = app.config.get('OUTPUT_DIR')
     session_log_dir = app.config.get('SESSION_LOG_DIR')
@@ -381,6 +388,13 @@ def check_username():
     username = request.args.get('username', '').strip()
     if not username or len(username) < 2:
         return jsonify({'available': False, 'message': 'Too short'})
+
+    # Match the register route: a missing/off REGISTRATION_OPEN means
+    # registration is closed, and no username is "available".
+    from retrobridge.admin.settings_utils import get_bool
+    if not get_bool('REGISTRATION_OPEN'):
+        return jsonify({'available': False, 'message': 'Registration is closed'})
+
     existing = current_app.db_session.query(User).filter_by(
         username=username).first()
     if existing:
