@@ -70,7 +70,7 @@
             const jobId = this.dataset.jobId;
             const row = document.getElementById('detail-' + jobId);
             if (row) {
-                row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+                row.classList.toggle('d-none');
             }
         });
     });

@@ -153,7 +153,7 @@ class ProdConfig(BaseConfig):
         'Content-Security-Policy': (
             "default-src 'self'; "
             "script-src 'self' cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+            "style-src 'self' cdn.jsdelivr.net; "
             "img-src 'self' data: https://www.gravatar.com; "
             "font-src 'self' cdn.jsdelivr.net; "
             "connect-src 'self' wss:; "

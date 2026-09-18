@@ -43,13 +43,13 @@ def test_run_prod_script_uses_project_venv_gunicorn():
     assert "venv/bin/gunicorn" in text
 
 
-def test_prod_csp_allows_inline_styles_and_gravatar():
+def test_prod_csp_no_inline_styles_and_allows_gravatar():
     from config import ProdConfig
 
     csp = ProdConfig.SECURITY_HEADERS["Content-Security-Policy"]
-    # Templates use inline style attributes and <style> blocks (Bootstrap
-    # components); script-src stays strict (no 'unsafe-inline' there).
-    assert "'unsafe-inline'" in csp
+    # All inline style attributes and <style> blocks have been moved to the
+    # external stylesheet; script-src stays strict (no 'unsafe-inline' there).
+    assert "'unsafe-inline'" not in csp
     # Avatars are served from Gravatar (base.html, models.py avatar URLs).
     assert "www.gravatar.com" in csp
     assert "script-src" in csp

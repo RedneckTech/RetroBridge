@@ -9,8 +9,7 @@
     <div class="col-auto">
         <a href="?{{ 'device_id=' + device_id + '&' if device_id }}{{ 'search=' + search + '&' if search }}"
            class="text-decoration-none">
-            <div class="border rounded p-2 text-center {{ 'bg-primary text-white' if not status else '' }}"
-                 style="min-width:80px">
+            <div class="border rounded p-2 text-center table-col-sm {{ 'bg-primary text-white' if not status else '' }}">
                 <div class="fs-5">{{ all_count }}</div>
                 <small>All</small>
             </div>
@@ -20,8 +19,7 @@
     <div class="col-auto">
         <a href="?status={{ s }}{{ '&device_id=' + device_id if device_id }}{{ '&search=' + search if search }}"
            class="text-decoration-none">
-            <div class="border rounded p-2 text-center {{ 'bg-' + color + ' text-white' if status == s else '' }}"
-                 style="min-width:80px">
+            <div class="border rounded p-2 text-center table-col-sm {{ 'bg-' + color + ' text-white' if status == s else '' }}">
                 <div class="fs-5">{{ status_counts.get(s, 0) }}</div>
                 <small>{{ label }}</small>
             </div>
@@ -75,7 +73,7 @@
     <table class="table table-hover align-middle">
         <thead>
             <tr>
-                <th style="width:30px">
+                <th class="table-col-xs">
                     <input type="checkbox" class="form-check-input" id="selectAll">
                 </th>
                 <th>ID</th>
@@ -153,7 +151,7 @@
                 </td>
             </tr>
             <!-- Inline detail row (hidden by default) -->
-            <tr class="job-detail bg-light" id="detail-{{ job.id }}" style="display:none">
+            <tr class="job-detail bg-light d-none" id="detail-{{ job.id }}">
                 <td colspan="10">
                     <div class="p-2">
                         <div class="row">

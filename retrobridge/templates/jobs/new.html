@@ -1,26 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Submit New Job{% endblock %}
-{% block head %}
-<style>
-.device-card { cursor: pointer; transition: all 0.15s; border: 2px solid transparent; }
-.device-card:hover { border-color: var(--bs-primary); }
-.device-card.selected { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), 0.05); }
-.device-card.busy { opacity: 0.7; }
-.drop-zone {
-    border: 2px dashed var(--bs-secondary);
-    border-radius: 8px;
-    padding: 2.5rem;
-    text-align: center;
-    transition: all 0.2s;
-    cursor: pointer;
-}
-.drop-zone.drag-over { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), 0.05); }
-.drop-zone.has-file { border-style: solid; border-color: var(--bs-success); }
-.quota-bar { height: 8px; border-radius: 4px; transition: width 0.3s; }
-.cmd-preview { font-family: monospace; font-size: 0.85rem; max-height: 120px; overflow-y: auto; }
-.last-job-card { border-left: 3px solid var(--bs-info); }
-</style>
-{% endblock %}
+
 {% block content %}
 <div id="new-job-page">
 <h2>Submit New Job</h2>
@@ -37,9 +17,9 @@
                         {{ 'Full' if quota_used >= quota_max else 'Available' }}
                     </span>
                 </div>
-                <div class="progress" style="height: 6px;">
+                <div class="progress progress-thin">
                     <div class="progress-bar bg-{{ 'danger' if quota_used >= quota_max else 'warning' if quota_used >= quota_max * 0.8 else 'success' }}"
-                         style="width: {{ (quota_used / quota_max * 100) if quota_max > 0 else 0 }}%"></div>
+                         data-width="{{ (quota_used / quota_max * 100) if quota_max > 0 else 0 }}%"></div>
                 </div>
             </div>
         </div>
@@ -135,12 +115,12 @@
         <label class="form-label fw-bold">Program File</label>
         <div class="drop-zone" id="drop-zone">
             <div id="drop-placeholder">
-                <div style="font-size: 2rem;">📁</div>
+                <div class="icon-sm">📁</div>
                 <p class="mb-1 mt-2">Drop your file here or <strong>browse</strong></p>
                 <small class="text-muted">.bin .hex .obj .asm .s .txt — max {{ max_upload_mb }} MB</small>
             </div>
             <div id="file-selected" class="d-none">
-                <div style="font-size: 2rem;">📄</div>
+                <div class="icon-sm">📄</div>
                 <p class="mb-1 mt-2"><strong id="file-name"></strong></p>
                 <small class="text-muted" id="file-size"></small>
                 <br><a href="#" class="small" data-action="clear-file">Remove</a>

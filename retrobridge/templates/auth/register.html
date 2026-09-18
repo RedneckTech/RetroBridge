@@ -12,8 +12,8 @@
                 <div class="invalid-feedback" id="usernameError">
                     {% for error in form.username.errors %}{{ error }}{% endfor %}
                 </div>
-                <div class="valid-feedback" id="usernameOk" style="display:none">Available</div>
-                <div class="form-text" id="usernameChecking" style="display:none">Checking...</div>
+                <div class="valid-feedback d-none" id="usernameOk">Available</div>
+                <div class="form-text d-none" id="usernameChecking">Checking...</div>
             </div>
             <div class="mb-3">
                 {{ form.email.label(class="form-label") }}
@@ -46,7 +46,7 @@
                 <div class="invalid-feedback" id="confirmError">
                     {% for error in form.confirm_password.errors %}{{ error }}{% endfor %}
                 </div>
-                <div class="valid-feedback" id="confirmOk" style="display:none">Passwords match</div>
+                <div class="valid-feedback d-none" id="confirmOk">Passwords match</div>
             </div>
             {{ form.submit(class="btn btn-primary w-100") }}
         </form>

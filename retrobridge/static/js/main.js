@@ -1,6 +1,11 @@
 // RetroBridge main JavaScript
 
 document.addEventListener('DOMContentLoaded', function () {
+    // Set progress-bar widths from data-width (avoids inline style= attributes for CSP)
+    document.querySelectorAll('[data-width]').forEach(function (el) {
+        el.style.width = el.dataset.width;
+    });
+
     // Auto-dismiss flash messages after 5 seconds
     const alerts = document.querySelectorAll('.alert-dismissible');
     alerts.forEach(function (alert) {

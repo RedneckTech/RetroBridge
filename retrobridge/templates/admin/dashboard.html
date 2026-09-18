@@ -108,21 +108,21 @@
 {% if total > 0 %}
 <div class="mb-4">
     <h5>Job Distribution</h5>
-    <div class="progress" style="height:24px">
+    <div class="progress progress-thick">
         {% if stats.queued_jobs %}
-        <div class="progress-bar bg-secondary" style="width:{{ (stats.queued_jobs / total * 100)|round(1) }}%"
+        <div class="progress-bar bg-secondary" data-width="{{ (stats.queued_jobs / total * 100)|round(1) }}%"
              title="Queued: {{ stats.queued_jobs }}">{{ stats.queued_jobs }} queued</div>
         {% endif %}
         {% if stats.running_jobs %}
-        <div class="progress-bar bg-warning" style="width:{{ (stats.running_jobs / total * 100)|round(1) }}%"
+        <div class="progress-bar bg-warning" data-width="{{ (stats.running_jobs / total * 100)|round(1) }}%"
              title="Running: {{ stats.running_jobs }}">{{ stats.running_jobs }}</div>
         {% endif %}
         {% if stats.completed_jobs %}
-        <div class="progress-bar bg-success" style="width:{{ (stats.completed_jobs / total * 100)|round(1) }}%"
+        <div class="progress-bar bg-success" data-width="{{ (stats.completed_jobs / total * 100)|round(1) }}%"
              title="Completed: {{ stats.completed_jobs }}">{{ stats.completed_jobs }}</div>
         {% endif %}
         {% if stats.failed_jobs %}
-        <div class="progress-bar bg-danger" style="width:{{ (stats.failed_jobs / total * 100)|round(1) }}%"
+        <div class="progress-bar bg-danger" data-width="{{ (stats.failed_jobs / total * 100)|round(1) }}%"
              title="Failed: {{ stats.failed_jobs }}">{{ stats.failed_jobs }}</div>
         {% endif %}
     </div>

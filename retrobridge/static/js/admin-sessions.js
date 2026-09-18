@@ -62,7 +62,7 @@
     document.querySelectorAll('.toggle-detail').forEach(function(btn) {
         btn.addEventListener('click', function() {
             const row = document.getElementById('detail-' + this.dataset.sessionId);
-            if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+            if (row) row.classList.toggle('d-none');
         });
     });
 })();

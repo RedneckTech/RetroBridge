@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from sqlalchemy import text
 from werkzeug.utils import secure_filename
 
 from retrobridge.models import Device, Job, User
@@ -180,9 +181,24 @@ def create_job(db_session, user_id, device_id, filename, file_obj,
 
     # Re-check quota and rate limit at creation time: the route's earlier
     # checks are advisory and two concurrent submissions could both pass.
+    #
+    # SQLite (the production DB here) serializes writers at the database
+    # level.  To close the read-then-act window we must be inside a write
+    # transaction before reading the quota.  Start an immediate transaction,
+    # which acquires the reserved lock up front and blocks other writers.
+    raw_session = db_session()
+    if raw_session.in_transaction() and (raw_session.dirty or raw_session.new):
+        raise RuntimeError(
+            'create_job must be called with no pending writes in the session'
+        )
+    if raw_session.in_transaction():
+        raw_session.rollback()
+    raw_session.execute(text('BEGIN IMMEDIATE'))
+
     user = db_session.get(User, user_id)
     if user is None:
         raise ValueError('User does not exist.')
+
     _, _, exceeded = get_user_quota(db_session, user)
     if exceeded:
         raise ValueError(

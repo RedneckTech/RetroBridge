@@ -55,7 +55,7 @@
     <table class="table table-hover align-middle">
         <thead>
             <tr>
-                <th style="width:30px">
+                <th class="table-col-xs">
                     <input type="checkbox" class="form-check-input" id="selectAll">
                 </th>
                 <th>ID</th>
@@ -200,7 +200,7 @@
                             data-session-id="{{ s.id }}">Details</button>
                 </td>
             </tr>
-            <tr class="session-detail bg-light" id="detail-{{ s.id }}" style="display:none">
+            <tr class="session-detail bg-light d-none" id="detail-{{ s.id }}">
                 <td colspan="9">
                     <div class="p-2">
                         <div class="row">

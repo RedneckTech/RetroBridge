@@ -6,8 +6,7 @@
     <div class="col-md-5">
         <div class="text-center mb-4">
             <img src="{{ current_user.avatar_url(size=160) }}" alt="Avatar"
-                 class="rounded-circle mb-3 border border-3 border-secondary"
-                 style="width:120px;height:120px;object-fit:cover">
+                 class="rounded-circle mb-3 border border-3 border-secondary avatar-profile">
             <h4>{{ current_user.full_name or current_user.username }}</h4>
             <p class="text-muted small mb-1">{{ current_user.email }}</p>
             {% if current_user.bio %}
@@ -33,9 +32,9 @@
                         <span>Job Queue</span>
                         <span>{{ stats.queued_count + stats.running_count }} / {{ stats.max_queued }}</span>
                     </div>
-                    <div class="progress" style="height:8px">
+                    <div class="progress progress-xs">
                         <div class="progress-bar {{ 'bg-danger' if q_pct >= 100 else 'bg-warning' if q_pct >= 75 else 'bg-success' }}"
-                             style="width:{{ [q_pct, 100]|min }}%"></div>
+                             data-width="{{ [q_pct, 100]|min }}%"></div>
                     </div>
                 </div>
                 {% set s_pct = stats.active_sessions / stats.max_sessions * 100 if stats.max_sessions else 0 %}
@@ -44,9 +43,9 @@
                         <span>Terminal Sessions</span>
                         <span>{{ stats.active_sessions }} / {{ stats.max_sessions }}</span>
                     </div>
-                    <div class="progress" style="height:8px">
+                    <div class="progress progress-xs">
                         <div class="progress-bar {{ 'bg-danger' if s_pct >= 100 else 'bg-warning' if s_pct >= 75 else 'bg-success' }}"
-                             style="width:{{ [s_pct, 100]|min }}%"></div>
+                             data-width="{{ [s_pct, 100]|min }}%"></div>
                     </div>
                 </div>
             </div>
@@ -120,8 +119,7 @@
                    class="list-group-item list-group-item-action py-2">
                     <div class="d-flex justify-content-between align-items-center">
                         <small>{{ job.original_filename }}</small>
-                        <span class="badge bg-{{ 'success' if job.status == 'completed' else 'warning' if job.status == 'queued' else 'info' if job.status == 'running' else 'danger' if job.status == 'failed' else 'secondary' }}"
-                              style="font-size:0.65rem">{{ job.status|title }}</span>
+                        <span class="badge bg-{{ 'success' if job.status == 'completed' else 'warning' if job.status == 'queued' else 'info' if job.status == 'running' else 'danger' if job.status == 'failed' else 'secondary' }} status-small">{{ job.status|title }}</span>
                     </div>
                 </a>
                 {% endfor %}
@@ -145,8 +143,7 @@
                             <br><small class="text-muted">{{ s.connected_at.strftime('%m/%d %H:%M') if s.connected_at }}</small>
                         </div>
                         <div class="text-end">
-                            <span class="badge bg-{{ 'success' if s.status == 'active' else 'secondary' }}"
-                                  style="font-size:0.65rem">{{ s.status|title }}</span>
+                            <span class="badge bg-{{ 'success' if s.status == 'active' else 'secondary' }} status-small">{{ s.status|title }}</span>
                             {% if s.duration_seconds %}
                             <br><small class="text-muted">{{ s.duration_seconds }}s</small>
                             {% endif %}

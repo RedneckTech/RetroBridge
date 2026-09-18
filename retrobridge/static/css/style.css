@@ -12,26 +12,48 @@
     height: 100%;
 }
 
+/* Avatar utilities */
 .avatar-nav {
     width: 28px;
     height: 28px;
     object-fit: cover;
     border: 1px solid rgba(255,255,255,0.3);
+    margin-top: 6px;
 }
 
 .avatar-profile {
+    width: 120px;
+    height: 120px;
+    object-fit: cover;
     transition: transform 0.2s;
 }
 .avatar-profile:hover {
     transform: scale(1.05);
 }
 
+.avatar-small {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+}
+
+/* Status badges */
 .status-badge-queued { background-color: #ffc107; color: #000; }
 .status-badge-running { background-color: #0dcaf0; }
 .status-badge-completed { background-color: #198754; }
 .status-badge-failed { background-color: #dc3545; }
 .status-badge-canceled { background-color: #6c757d; }
 
+.badge-tiny {
+    font-size: 0.6rem;
+    vertical-align: middle;
+}
+
+.status-small {
+    font-size: 0.65rem;
+}
+
+/* Card hover effects */
 .card-stats {
     transition: transform 0.2s;
 }
@@ -39,6 +61,218 @@
     transform: translateY(-2px);
 }
 
+/* Job table */
 .job-table tr:hover {
     cursor: pointer;
+}
+
+/* Progress bar heights */
+.progress.progress-thin {
+    height: 6px;
+}
+
+.progress.progress-xs {
+    height: 8px;
+}
+
+.progress.progress-thick {
+    height: 24px;
+}
+
+/* Icon sizes */
+.icon-sm {
+    font-size: 2rem;
+}
+
+.icon-lg {
+    font-size: 3rem;
+}
+
+/* Table column widths */
+.table-col-xs {
+    width: 30px;
+}
+
+.table-col-sm {
+    min-width: 80px;
+}
+
+/* Dashboard stat cards */
+.stat-card {
+    border-left: 4px solid transparent;
+}
+.stat-card.queued {
+    border-left-color: var(--bs-warning);
+}
+.stat-card.running {
+    border-left-color: var(--bs-info);
+}
+.stat-card.done {
+    border-left-color: var(--bs-success);
+}
+.stat-card.failed {
+    border-left-color: var(--bs-danger);
+}
+.stat-card.session {
+    border-left-color: var(--bs-primary);
+}
+
+.device-mini {
+    border: 1px solid var(--bs-border-color);
+}
+
+.active-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    background: var(--bs-success);
+    margin-right: 4px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* New job page */
+.device-card {
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 2px solid transparent;
+}
+.device-card:hover {
+    border-color: var(--bs-primary);
+}
+.device-card.selected {
+    border-color: var(--bs-primary);
+    background: rgba(var(--bs-primary-rgb), 0.05);
+}
+.device-card.busy {
+    opacity: 0.7;
+}
+
+.drop-zone {
+    border: 2px dashed var(--bs-secondary);
+    border-radius: 8px;
+    padding: 2.5rem;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.drop-zone.drag-over {
+    border-color: var(--bs-primary);
+    background: rgba(var(--bs-primary-rgb), 0.05);
+}
+.drop-zone.has-file {
+    border-style: solid;
+    border-color: var(--bs-success);
+}
+
+.quota-bar {
+    height: 8px;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.cmd-preview {
+    font-family: monospace;
+    font-size: 0.85rem;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.last-job-card {
+    border-left: 3px solid var(--bs-info);
+}
+
+/* Terminal session page */
+html {
+    height: 100%;
+}
+
+body.terminal-page {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+body.terminal-page > .container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+body.terminal-page footer {
+    margin-top: 0.5rem !important;
+}
+
+.terminal-wrapper {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+#status-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.82rem;
+    padding: 5px 10px;
+    background: #1e1e1e;
+    color: #ccc;
+    border-radius: 4px 4px 0 0;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+#status-bar .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.dot.connected {
+    background: #4caf50;
+}
+
+.dot.disconnected {
+    background: #f44336;
+}
+
+#status-bar .stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+#status-bar .stat-label {
+    color: #888;
+    font-size: 0.75rem;
+}
+
+#status-bar .stat-value {
+    color: #ddd;
+}
+
+#terminal-container {
+    flex: 1;
+    min-height: 0;
+    border: 1px solid #333;
+    border-top: none;
+}
+
+.terminal-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 6px 0;
+    flex-shrink: 0;
 }

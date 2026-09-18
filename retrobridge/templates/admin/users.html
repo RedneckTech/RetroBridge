@@ -40,8 +40,7 @@
             {% for user in users %}
             {% set stats = user_stats.get(user.id, {}) %}
             <tr>
-                <td><img src="{{ user.avatar_url(size=32) }}" alt="" class="rounded-circle"
-                         style="width:32px;height:32px;object-fit:cover"></td>
+                <td><img src="{{ user.avatar_url(size=32) }}" alt="" class="rounded-circle avatar-small"></td>
                 <td>
                     <strong>{{ user.username }}</strong>
                     {% if user.full_name %}
