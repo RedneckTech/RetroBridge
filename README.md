@@ -301,9 +301,10 @@ This is a community project — contributions are welcome!
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-thing`)
 3. Make your changes
-4. Run the tests (`pytest tests/ -v`)
-5. Commit and push
-6. Open a pull request
+4. Run the linter and formatter (`ruff check .` and `ruff format .`)
+5. Run the tests (`pytest tests/ -v`)
+6. Commit and push
+7. Open a pull request
 
 ### Development Guidelines
 
@@ -311,6 +312,23 @@ This is a community project — contributions are welcome!
 - Use SQLAlchemy ORM for all database access (no raw SQL in route handlers)
 - Add tests for new functionality (`tests/unit/`, `tests/integration/`, or `tests/e2e/`)
 - PTY simulation is available for testing without hardware
+
+### Linting and formatting
+
+Ruff (pinned in `requirements.txt`) is configured in `pyproject.toml`.
+The rule set is ruff 0.16's expanded default set plus a few high-signal
+pycodestyle/pyflakes rules, so keep the pinned ruff version to stay stable.
+
+```bash
+# Lint (failures block a PR)
+ruff check .
+
+# Format (normalizes style)
+ruff format .
+
+# Check formatting without changing files
+ruff format --check .
+```
 
 ### Testing
 

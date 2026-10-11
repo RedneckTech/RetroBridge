@@ -1,0 +1,25 @@
+[tool.ruff]
+# Keep ruff pinned in requirements.txt: the lint rule set relies on the
+# expanded defaults that shipped in ruff 0.16 (413 rules across 34
+# categories), so the exact ruff version determines what "clean" means.
+target-version = "py311"
+line-length = 88
+
+# Ruff 0.16 formats Python code blocks in Markdown by default; keep this
+# change focused on real source files for now.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Extend (not replace) the default rule set with a few high-signal
+# pycodestyle/pyflakes rules that ruff 0.16 dropped from its defaults.
+extend-select = [
+    "E711", # comparison to None should use `is`
+    "E712", # comparison to True should use `is`
+    "E713", # membership test should use `not in`
+    "E714", # identity test should use `is not`
+    "E721", # comparing types should use `isinstance`
+    "F403", # star import used; undefined names undetectable
+    "F405", # name may be undefined (star import)
+    "F406", # `from module import *` only allowed at module level
+    "F722", # forward annotation syntax error
+]
