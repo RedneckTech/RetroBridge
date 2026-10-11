@@ -1,4 +1,6 @@
+import logging
 import os
+from datetime import UTC
 
 from dotenv import load_dotenv
 from flask import Flask, request
@@ -10,6 +12,8 @@ from retrobridge.models import Base
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 login_manager = LoginManager()
 socketio = SocketIO()
 csrf = CSRFProtect()
@@ -19,36 +23,44 @@ def create_app(config=None):
     app = Flask(__name__)
 
     if config is None:
-        env = os.environ.get('FLASK_ENV', 'development')
-        if env == 'production':
-            app.config.from_object('config.ProdConfig')
-        elif env == 'testing':
-            app.config.from_object('config.TestConfig')
+        env = os.environ.get("FLASK_ENV", "development")
+        if env == "production":
+            app.config.from_object("config.ProdConfig")
+        elif env == "testing":
+            app.config.from_object("config.TestConfig")
         else:
-            app.config.from_object('config.DevConfig')
+            app.config.from_object("config.DevConfig")
     else:
         app.config.from_object(config)
 
-    if os.environ.get('FLASK_ENV') == 'production':
+    if os.environ.get("FLASK_ENV") == "production":
         from config import ProdConfig
+
         ProdConfig.validate()
         from retrobridge.config_validation import validate_config, validate_db
+
         validate_config(app)
         validate_db(app)
 
-    from retrobridge.models import Base as _Base
     from sqlalchemy import create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.pool import NullPool, StaticPool
 
-    poolclass_name = app.config.get('SQLALCHEMY_ENGINE_POOLCLASS', 'NullPool')
-    poolclass = {'NullPool': NullPool, 'StaticPool': StaticPool}.get(poolclass_name, NullPool)
+    poolclass_name = app.config.get("SQLALCHEMY_ENGINE_POOLCLASS", "NullPool")
+    poolclass = {"NullPool": NullPool, "StaticPool": StaticPool}.get(
+        poolclass_name, NullPool
+    )
 
-    engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'],
-                           connect_args=app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('connect_args', {}),
-                           poolclass=poolclass)
+    engine = create_engine(
+        app.config["SQLALCHEMY_DATABASE_URI"],
+        connect_args=app.config.get("SQLALCHEMY_ENGINE_OPTIONS", {}).get(
+            "connect_args", {}
+        ),
+        poolclass=poolclass,
+    )
 
     from retrobridge.sqlite_provision import configure_sqlite_engine
+
     configure_sqlite_engine(engine, app.config)
 
     session_factory = sessionmaker(bind=engine)
@@ -58,43 +70,49 @@ def create_app(config=None):
     Base.metadata.bind = engine
 
     login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-    login_manager.login_message_category = 'warning'
-    login_manager.session_protection = 'strong'
+    login_manager.login_view = "auth.login"
+    login_manager.login_message_category = "warning"
+    login_manager.session_protection = "strong"
 
-    socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'))
+    socketio.init_app(
+        app, async_mode=app.config.get("SOCKETIO_ASYNC_MODE", "threading")
+    )
     socketio._flask_app = app
     csrf.init_app(app)
 
-    @app.route('/')
+    @app.route("/")
     def landing():
         from flask import render_template
-        return render_template('landing.html')
 
-    from retrobridge.auth.routes import auth_bp
-    from retrobridge.jobs.routes import jobs_bp
-    from retrobridge.api.routes import api_bp
-    from retrobridge.terminal.routes import terminal_bp
+        return render_template("landing.html")
+
     from retrobridge.admin.routes import admin_bp
+    from retrobridge.api.routes import api_bp
+    from retrobridge.auth.routes import auth_bp
     from retrobridge.health import health_bp
+    from retrobridge.jobs.routes import jobs_bp
     from retrobridge.terminal.events import register_socketio_events
+    from retrobridge.terminal.routes import terminal_bp
 
-    app.register_blueprint(auth_bp, url_prefix='/auth')
+    app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(jobs_bp)
-    app.register_blueprint(api_bp, url_prefix='/api')
-    app.register_blueprint(terminal_bp, url_prefix='/terminal')
-    app.register_blueprint(admin_bp, url_prefix='/admin')
+    app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(terminal_bp, url_prefix="/terminal")
+    app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(health_bp)
 
     register_socketio_events(socketio)
 
     from retrobridge.auth.utils import load_user
+
     login_manager.user_loader(load_user)
 
     from cli import register_cli_commands
+
     register_cli_commands(app)
 
     from retrobridge.security import init_security
+
     init_security(app)
 
     register_error_handlers(app)
@@ -104,47 +122,50 @@ def create_app(config=None):
 
     @app.context_processor
     def inject_helpers():
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        def make_query_args(status='', search='', device_id=''):
+        def make_query_args(status="", search="", device_id=""):
             parts = []
             if status:
-                parts.append(f'status={status}')
+                parts.append(f"status={status}")
             if search:
-                parts.append(f'search={search}')
+                parts.append(f"search={search}")
             if device_id:
-                parts.append(f'device_id={device_id}')
-            return '&'.join(parts)
+                parts.append(f"device_id={device_id}")
+            return "&".join(parts)
 
         def utcnow():
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
 
-        return dict(request_args=make_query_args, utcnow=utcnow)
+        return {"request_args": make_query_args, "utcnow": utcnow}
 
     @app.before_request
     def check_maintenance():
-        if request.endpoint in ('auth.login', 'auth.logout', 'static'):
+        if request.endpoint in ("auth.login", "auth.logout", "static"):
             return
-        if request.blueprint in ('admin', 'health'):
+        if request.blueprint in ("admin", "health"):
             return
         from retrobridge.admin.settings_utils import get_bool
-        if get_bool('MAINTENANCE_MODE'):
+
+        if get_bool("MAINTENANCE_MODE"):
             from flask_login import current_user
+
             if not current_user.is_authenticated or not current_user.is_admin:
                 from flask import render_template
-                return render_template('maintenance.html'), 503
+
+                return render_template("maintenance.html"), 503
 
     @app.teardown_appcontext
     def shutdown_session(exception=None):
-        if not app.config.get('TESTING'):
+        if not app.config.get("TESTING"):
             app.db_session.remove()
 
     os.makedirs(app.instance_path, exist_ok=True)
-    os.makedirs(app.config.get('UPLOAD_DIR', 'uploads'), exist_ok=True)
-    os.makedirs(app.config.get('OUTPUT_DIR', 'outputs'), exist_ok=True)
-    os.makedirs(app.config.get('SESSION_LOG_DIR', 'session_logs'), exist_ok=True)
-    os.makedirs(app.config.get('LOG_DIR', 'logs'), exist_ok=True)
-    os.makedirs(app.config.get('BACKUP_DIR', 'backups'), exist_ok=True)
+    os.makedirs(app.config.get("UPLOAD_DIR", "uploads"), exist_ok=True)
+    os.makedirs(app.config.get("OUTPUT_DIR", "outputs"), exist_ok=True)
+    os.makedirs(app.config.get("SESSION_LOG_DIR", "session_logs"), exist_ok=True)
+    os.makedirs(app.config.get("LOG_DIR", "logs"), exist_ok=True)
+    os.makedirs(app.config.get("BACKUP_DIR", "backups"), exist_ok=True)
 
     return app
 
@@ -153,17 +174,20 @@ def register_error_handlers(app):
     @app.errorhandler(403)
     def forbidden(e):
         from flask import render_template
-        return render_template('errors/403.html'), 403
+
+        return render_template("errors/403.html"), 403
 
     @app.errorhandler(404)
     def not_found(e):
         from flask import render_template
-        return render_template('errors/404.html'), 404
+
+        return render_template("errors/404.html"), 404
 
     @app.errorhandler(500)
     def internal_error(e):
         from flask import render_template
-        return render_template('errors/500.html'), 500
+
+        return render_template("errors/500.html"), 500
 
 
 def _cleanup_orphaned_sessions(app):
@@ -174,31 +198,38 @@ def _cleanup_orphaned_sessions(app):
     restart is orphaned, and all port leases are stale.  Clean both up
     so ports can be reused and users see accurate session history.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from sqlalchemy import delete
+
     from retrobridge.models import PortLease, TerminalSession
 
     try:
         app.db_session.execute(delete(PortLease))
         app.db_session.commit()
     except Exception:
+        logger.warning("Failed to clear stale port leases on startup", exc_info=True)
         app.db_session.rollback()
 
     try:
-        sessions = app.db_session.query(TerminalSession).filter_by(
-            status='active',
-        ).all()
+        sessions = (
+            app.db_session.query(TerminalSession)
+            .filter_by(
+                status="active",
+            )
+            .all()
+        )
         if sessions:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for s in sessions:
-                s.status = 'disconnected'
-                s.disconnect_reason = 'server_restart'
+                s.status = "disconnected"
+                s.disconnect_reason = "server_restart"
                 s.disconnected_at = now
                 if s.connected_at:
                     connected = s.connected_at
                     if connected.tzinfo is None:
-                        connected = connected.replace(tzinfo=timezone.utc)
+                        connected = connected.replace(tzinfo=UTC)
                     s.duration_seconds = int((now - connected).total_seconds())
             app.db_session.commit()
     except Exception:
-        pass
+        logger.warning("Failed to clean up orphaned sessions on startup", exc_info=True)

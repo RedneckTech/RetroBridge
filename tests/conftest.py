@@ -4,8 +4,10 @@ import pytest
 @pytest.fixture
 def app():
     from retrobridge import create_app
-    app = create_app('config.TestConfig')
+
+    app = create_app("config.TestConfig")
     from retrobridge.models import Base
+
     Base.metadata.create_all(bind=app.db_engine)
     yield app
     app.db_session.remove()

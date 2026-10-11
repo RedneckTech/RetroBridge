@@ -12,19 +12,17 @@ import re
 import shutil
 import sqlite3
 import time
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
-
-BACKUP_FILENAME_PATTERN = re.compile(r'retrobridge_.*\.db(\.gz)?$')
+BACKUP_FILENAME_PATTERN = re.compile(r"retrobridge_.*\.db(\.gz)?$")
 
 
 def _db_path(uri):
-    if uri.startswith('sqlite:///'):
-        path = uri[len('sqlite:///'):]
+    if uri.startswith("sqlite:///"):
+        path = uri[len("sqlite:///") :]
         return os.path.abspath(path)
-    if uri.startswith('sqlite://'):
-        path = uri[len('sqlite://'):]
+    if uri.startswith("sqlite://"):
+        path = uri[len("sqlite://") :]
         return os.path.abspath(path)
     return os.path.abspath(uri)
 
@@ -63,7 +61,7 @@ def backup_database(db_uri, backup_dir, compress=True, label=None):
 
     os.makedirs(backup_dir, exist_ok=True)
 
-    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     stem = f"retrobridge_{label + '_' if label else ''}{ts}"
     raw_path = os.path.join(backup_dir, f"{stem}.db")
 
@@ -77,10 +75,9 @@ def backup_database(db_uri, backup_dir, compress=True, label=None):
 
     result = raw_path
     if compress:
-        gz_path = raw_path + '.gz'
-        with open(raw_path, 'rb') as f_in:
-            with gzip.open(gz_path, 'wb') as f_out:
-                shutil.copyfileobj(f_in, f_out)
+        gz_path = raw_path + ".gz"
+        with open(raw_path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
         os.remove(raw_path)
         result = gz_path
 
@@ -118,16 +115,15 @@ def restore_database(backup_path, db_uri):
         raise FileNotFoundError(f"Backup not found: {backup_path}")
 
     db_path = _db_path(db_uri)
-    os.makedirs(os.path.dirname(db_path) or '.', exist_ok=True)
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
 
     source_path = backup_path
     temp_path = None
 
-    if backup_path.endswith('.gz'):
-        temp_path = backup_path.removesuffix('.gz') + '.restore_temp'
-        with gzip.open(backup_path, 'rb') as f_in:
-            with open(temp_path, 'wb') as f_out:
-                shutil.copyfileobj(f_in, f_out)
+    if backup_path.endswith(".gz"):
+        temp_path = backup_path.removesuffix(".gz") + ".restore_temp"
+        with gzip.open(backup_path, "rb") as f_in, open(temp_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
         source_path = temp_path
 
     try:
@@ -160,14 +156,16 @@ def list_backups(backup_dir):
             continue
         path = os.path.join(backup_dir, name)
         stat = os.stat(path)
-        entries.append({
-            'filename': name,
-            'path': path,
-            'size_bytes': stat.st_size,
-            'modified': datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-        })
+        entries.append(
+            {
+                "filename": name,
+                "path": path,
+                "size_bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+            }
+        )
 
-    entries.sort(key=lambda e: e['modified'], reverse=True)
+    entries.sort(key=lambda e: e["modified"], reverse=True)
     return entries
 
 

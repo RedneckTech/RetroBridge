@@ -3,6 +3,7 @@
 A dropped network bridge must raise SerialException so the terminal reader
 and xmodem can tear the session down instead of hanging until idle timeout.
 """
+
 import socket
 
 import pytest
@@ -39,9 +40,9 @@ def test_in_waiting_raises_after_peer_closes(pair):
 def test_read_drains_buffered_data_then_raises_on_eof(pair):
     a, b = pair
     w = _SocketWrapper(a)
-    b.sendall(b'hello')
+    b.sendall(b"hello")
     b.close()
-    assert w.read(100) == b'hello'
+    assert w.read(100) == b"hello"
     with pytest.raises(SerialException):
         w.read(1)
 
@@ -51,15 +52,15 @@ def test_write_raises_after_peer_closes(pair):
     w = _SocketWrapper(a)
     b.close()
     with pytest.raises(SerialException):
-        w.write(b'data')
+        w.write(b"data")
 
 
 def test_write_succeeds_when_open(pair):
     a, b = pair
     w = _SocketWrapper(a)
-    assert w.write(b'xyz') == 3
+    assert w.write(b"xyz") == 3
     b.settimeout(1.0)
-    assert b.recv(3) == b'xyz'
+    assert b.recv(3) == b"xyz"
 
 
 def test_is_open_flips_false_after_eof(pair):

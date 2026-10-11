@@ -8,6 +8,7 @@ from retrobridge.models import User
 
 def load_user(user_id):
     from flask import current_app
+
     return current_app.db_session.get(User, int(user_id))
 
 
@@ -17,4 +18,5 @@ def admin_required(f):
         if not current_user.is_authenticated or not current_user.is_admin:
             abort(403)
         return f(*args, **kwargs)
+
     return decorated_function

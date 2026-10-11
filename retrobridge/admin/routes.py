@@ -1,16 +1,27 @@
-from flask import render_template, redirect, url_for, flash, request
-from flask_login import login_required, current_user
+from datetime import UTC
+
+from flask import flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from retrobridge.admin import admin_bp
-from retrobridge.auth.utils import admin_required
 from retrobridge.admin.forms import (
-    DeviceForm, DevicePortForm, EditDeviceForm, SettingsForm, UserCreateForm,
+    DeviceForm,
+    DevicePortForm,
+    EditDeviceForm,
+    SettingsForm,
+    UserCreateForm,
     UserEditForm,
 )
+from retrobridge.auth.utils import admin_required
 from retrobridge.models import (
-    AdminSetting, Device, DevicePort, Job, TerminalSession, User,
+    AdminSetting,
+    Device,
+    DevicePort,
+    Job,
+    TerminalSession,
+    User,
 )
 
 
@@ -24,90 +35,106 @@ def _safe_int(value, default=None):
         return default
 
 
-@admin_bp.route('/')
+@admin_bp.route("/")
 @login_required
 @admin_required
 def dashboard():
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
 
     from flask import current_app
+
     from retrobridge.admin.settings_utils import get_bool
 
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
     db = current_app.db_session
     stats = {
-        'total_users': db.query(User).count(),
-        'total_jobs': db.query(Job).count(),
-        'running_jobs': db.query(Job).filter_by(status='running').count(),
-        'queued_jobs': db.query(Job).filter_by(status='queued').count(),
-        'failed_jobs': db.query(Job).filter_by(status='failed').count(),
-        'completed_jobs': db.query(Job).filter_by(status='completed').count(),
-        'active_sessions': db.query(TerminalSession).filter_by(status='active').count(),
-        'users_today': db.query(User).filter(User.created_at >= today).count(),
-        'jobs_today': db.query(Job).filter(Job.created_at >= today).count(),
-        'sessions_today': db.query(TerminalSession).filter(
-            TerminalSession.connected_at >= today).count(),
-        'maintenance_mode': get_bool('MAINTENANCE_MODE'),
-        'registration_open': get_bool('REGISTRATION_OPEN'),
+        "total_users": db.query(User).count(),
+        "total_jobs": db.query(Job).count(),
+        "running_jobs": db.query(Job).filter_by(status="running").count(),
+        "queued_jobs": db.query(Job).filter_by(status="queued").count(),
+        "failed_jobs": db.query(Job).filter_by(status="failed").count(),
+        "completed_jobs": db.query(Job).filter_by(status="completed").count(),
+        "active_sessions": db.query(TerminalSession).filter_by(status="active").count(),
+        "users_today": db.query(User).filter(User.created_at >= today).count(),
+        "jobs_today": db.query(Job).filter(Job.created_at >= today).count(),
+        "sessions_today": db.query(TerminalSession)
+        .filter(TerminalSession.connected_at >= today)
+        .count(),
+        "maintenance_mode": get_bool("MAINTENANCE_MODE"),
+        "registration_open": get_bool("REGISTRATION_OPEN"),
     }
 
-    devices = (db.query(Device)
-               .options(selectinload(Device.ports))
-               .order_by(Device.name).all())
+    devices = (
+        db.query(Device).options(selectinload(Device.ports)).order_by(Device.name).all()
+    )
 
     session_counts = dict(
-        db.query(TerminalSession.device_id,
-                 func.count(TerminalSession.id))
-        .filter(TerminalSession.status == 'active')
-        .group_by(TerminalSession.device_id).all())
+        db.query(TerminalSession.device_id, func.count(TerminalSession.id))
+        .filter(TerminalSession.status == "active")
+        .group_by(TerminalSession.device_id)
+        .all()
+    )
     queued_counts = dict(
         db.query(Job.device_id, func.count(Job.id))
-        .filter(Job.status == 'queued')
-        .group_by(Job.device_id).all())
+        .filter(Job.status == "queued")
+        .group_by(Job.device_id)
+        .all()
+    )
     running_counts = dict(
         db.query(Job.device_id, func.count(Job.id))
-        .filter(Job.status == 'running')
-        .group_by(Job.device_id).all())
+        .filter(Job.status == "running")
+        .group_by(Job.device_id)
+        .all()
+    )
 
     device_stats = []
     for d in devices:
-        device_stats.append({
-            'device': d,
-            'active_sessions': session_counts.get(d.id, 0),
-            'queued_jobs': queued_counts.get(d.id, 0),
-            'running_jobs': running_counts.get(d.id, 0),
-            'enabled_ports': len([p for p in d.ports if p.is_enabled]),
-        })
+        device_stats.append(
+            {
+                "device": d,
+                "active_sessions": session_counts.get(d.id, 0),
+                "queued_jobs": queued_counts.get(d.id, 0),
+                "running_jobs": running_counts.get(d.id, 0),
+                "enabled_ports": len([p for p in d.ports if p.is_enabled]),
+            }
+        )
 
     recent_jobs = db.query(Job).order_by(Job.created_at.desc()).limit(10).all()
-    recent_sessions = db.query(TerminalSession).order_by(
-        TerminalSession.connected_at.desc()).limit(10).all()
+    recent_sessions = (
+        db.query(TerminalSession)
+        .order_by(TerminalSession.connected_at.desc())
+        .limit(10)
+        .all()
+    )
 
-    return render_template('admin/dashboard.html', stats=stats,
-                           device_stats=device_stats,
-                           recent_jobs=recent_jobs,
-                           recent_sessions=recent_sessions)
+    return render_template(
+        "admin/dashboard.html",
+        stats=stats,
+        device_stats=device_stats,
+        recent_jobs=recent_jobs,
+        recent_sessions=recent_sessions,
+    )
 
 
 # -- User Management --
 
 
-@admin_bp.route('/users')
+@admin_bp.route("/users")
 @login_required
 @admin_required
 def users():
     from flask import current_app
-    page = request.args.get('page', 1, type=int)
+
+    page = request.args.get("page", 1, type=int)
     per_page = 20
-    search = request.args.get('search', '').strip()
+    search = request.args.get("search", "").strip()
 
     db = current_app.db_session
     query = db.query(User).order_by(User.username)
     if search:
         query = query.filter(
-            User.username.ilike(f'%{search}%') |
-            User.email.ilike(f'%{search}%')
+            User.username.ilike(f"%{search}%") | User.email.ilike(f"%{search}%")
         )
     total = query.count()
     users_list = query.offset((page - 1) * per_page).limit(per_page).all()
@@ -117,58 +144,76 @@ def users():
     job_totals = dict(
         db.query(Job.user_id, func.count(Job.id))
         .filter(Job.user_id.in_(user_ids))
-        .group_by(Job.user_id).all())
+        .group_by(Job.user_id)
+        .all()
+    )
     running_jobs = dict(
         db.query(Job.user_id, func.count(Job.id))
-        .filter(Job.user_id.in_(user_ids), Job.status == 'running')
-        .group_by(Job.user_id).all())
+        .filter(Job.user_id.in_(user_ids), Job.status == "running")
+        .group_by(Job.user_id)
+        .all()
+    )
     completed_jobs = dict(
         db.query(Job.user_id, func.count(Job.id))
-        .filter(Job.user_id.in_(user_ids), Job.status == 'completed')
-        .group_by(Job.user_id).all())
+        .filter(Job.user_id.in_(user_ids), Job.status == "completed")
+        .group_by(Job.user_id)
+        .all()
+    )
     active_sessions = dict(
         db.query(TerminalSession.user_id, func.count(TerminalSession.id))
-        .filter(TerminalSession.user_id.in_(user_ids),
-                TerminalSession.status == 'active')
-        .group_by(TerminalSession.user_id).all())
+        .filter(
+            TerminalSession.user_id.in_(user_ids), TerminalSession.status == "active"
+        )
+        .group_by(TerminalSession.user_id)
+        .all()
+    )
 
     user_stats = {
         u.id: {
-            'total_jobs': job_totals.get(u.id, 0),
-            'running_jobs': running_jobs.get(u.id, 0),
-            'completed_jobs': completed_jobs.get(u.id, 0),
-            'active_sessions': active_sessions.get(u.id, 0),
+            "total_jobs": job_totals.get(u.id, 0),
+            "running_jobs": running_jobs.get(u.id, 0),
+            "completed_jobs": completed_jobs.get(u.id, 0),
+            "active_sessions": active_sessions.get(u.id, 0),
         }
         for u in users_list
     }
 
-    return render_template('admin/users.html', users=users_list, total=total,
-                           page=page, pages=(total + per_page - 1) // per_page,
-                           search=search, user_stats=user_stats)
+    return render_template(
+        "admin/users.html",
+        users=users_list,
+        total=total,
+        page=page,
+        pages=(total + per_page - 1) // per_page,
+        search=search,
+        user_stats=user_stats,
+    )
 
 
-@admin_bp.route('/users/create', methods=['POST'])
+@admin_bp.route("/users/create", methods=["POST"])
 @login_required
 @admin_required
 def create_user():
     from flask import current_app
     from werkzeug.security import generate_password_hash
-    from retrobridge.admin.settings_utils import get_int
 
     form = UserCreateForm()
-    form.submit.label.text = 'Create User'
+    form.submit.label.text = "Create User"
     if form.validate_on_submit():
-        existing = current_app.db_session.query(User).filter_by(
-            username=form.username.data).first()
+        existing = (
+            current_app.db_session.query(User)
+            .filter_by(username=form.username.data)
+            .first()
+        )
         if existing:
-            flash('Username already taken.', 'danger')
-            return redirect(url_for('admin.users'))
+            flash("Username already taken.", "danger")
+            return redirect(url_for("admin.users"))
 
-        existing_email = current_app.db_session.query(User).filter_by(
-            email=form.email.data).first()
+        existing_email = (
+            current_app.db_session.query(User).filter_by(email=form.email.data).first()
+        )
         if existing_email:
-            flash('Email already in use.', 'danger')
-            return redirect(url_for('admin.users'))
+            flash("Email already in use.", "danger")
+            return redirect(url_for("admin.users"))
 
         user = User(
             username=form.username.data,
@@ -181,42 +226,51 @@ def create_user():
         )
         current_app.db_session.add(user)
         current_app.db_session.commit()
-        flash('User created.', 'success')
+        flash("User created.", "success")
     else:
         for field, errors in form.errors.items():
             for error in errors:
-                flash(f'{field}: {error}', 'danger')
-    return redirect(url_for('admin.users'))
+                flash(f"{field}: {error}", "danger")
+    return redirect(url_for("admin.users"))
 
 
-@admin_bp.route('/users/<int:user_id>', methods=['POST'])
+@admin_bp.route("/users/<int:user_id>", methods=["POST"])
 @login_required
 @admin_required
 def edit_user(user_id):
     from flask import current_app
     from werkzeug.security import generate_password_hash
+
     user = current_app.db_session.get(User, user_id)
     if not user:
-        flash('User not found.', 'danger')
-        return redirect(url_for('admin.users'))
+        flash("User not found.", "danger")
+        return redirect(url_for("admin.users"))
 
     form = UserEditForm(obj=user)
     if form.validate_on_submit():
-        existing = current_app.db_session.query(User).filter(
-            User.username == form.username.data,
-            User.id != user.id,
-        ).first()
+        existing = (
+            current_app.db_session.query(User)
+            .filter(
+                User.username == form.username.data,
+                User.id != user.id,
+            )
+            .first()
+        )
         if existing:
-            flash('Username already taken.', 'danger')
-            return redirect(url_for('admin.users'))
+            flash("Username already taken.", "danger")
+            return redirect(url_for("admin.users"))
 
-        existing_email = current_app.db_session.query(User).filter(
-            User.email == form.email.data,
-            User.id != user.id,
-        ).first()
+        existing_email = (
+            current_app.db_session.query(User)
+            .filter(
+                User.email == form.email.data,
+                User.id != user.id,
+            )
+            .first()
+        )
         if existing_email:
-            flash('Email already in use.', 'danger')
-            return redirect(url_for('admin.users'))
+            flash("Email already in use.", "danger")
+            return redirect(url_for("admin.users"))
 
         user.username = form.username.data
         user.email = form.email.data
@@ -227,70 +281,85 @@ def edit_user(user_id):
         if form.password.data:
             user.password_hash = generate_password_hash(form.password.data)
         current_app.db_session.commit()
-        flash('User updated.', 'success')
-    return redirect(url_for('admin.users'))
+        flash("User updated.", "success")
+    return redirect(url_for("admin.users"))
 
 
-@admin_bp.route('/users/<int:user_id>/delete', methods=['POST'])
+@admin_bp.route("/users/<int:user_id>/delete", methods=["POST"])
 @login_required
 @admin_required
 def delete_user(user_id):
     from flask import current_app
+
     if user_id == current_user.id:
-        flash('Cannot delete your own account.', 'danger')
-        return redirect(url_for('admin.users'))
+        flash("Cannot delete your own account.", "danger")
+        return redirect(url_for("admin.users"))
 
     user = current_app.db_session.get(User, user_id)
     if user:
         from retrobridge.api.routes import _delete_user_directories
+
         # Collect file locations before the rows are gone; delete files
         # only after the commit succeeds.
-        jobs = (current_app.db_session.query(Job)
-                .filter_by(user_id=user.id).all())
-        sessions = (current_app.db_session.query(TerminalSession)
-                    .filter_by(user_id=user.id).all())
+        jobs = current_app.db_session.query(Job).filter_by(user_id=user.id).all()
+        sessions = (
+            current_app.db_session.query(TerminalSession)
+            .filter_by(user_id=user.id)
+            .all()
+        )
         current_app.db_session.delete(user)
         current_app.db_session.commit()
         _delete_user_directories(current_app, jobs, sessions)
-        flash('User deleted.', 'info')
+        flash("User deleted.", "info")
 
-    return redirect(url_for('admin.users'))
+    return redirect(url_for("admin.users"))
 
 
 # -- Device Management --
 
-@admin_bp.route('/devices')
+
+@admin_bp.route("/devices")
 @login_required
 @admin_required
 def devices():
     from flask import current_app
+
     devices_list = current_app.db_session.query(Device).order_by(Device.name).all()
     add_form = DeviceForm()
     port_form = DevicePortForm()
-    port_form.submit.label.text = 'Add Port'
-    return render_template('admin/devices.html', devices=devices_list,
-                           add_form=add_form, port_form=port_form)
+    port_form.submit.label.text = "Add Port"
+    return render_template(
+        "admin/devices.html",
+        devices=devices_list,
+        add_form=add_form,
+        port_form=port_form,
+    )
 
 
 def _device_stats(db_session, device):
     return {
-        'active_sessions': db_session.query(TerminalSession)
-            .filter_by(device_id=device.id, status='active').count(),
-        'queued_jobs': db_session.query(Job)
-            .filter_by(device_id=device.id, status='queued').count(),
-        'running_jobs': db_session.query(Job)
-            .filter_by(device_id=device.id, status='running').count(),
-        'total_ports': len([p for p in device.ports if p.is_enabled]),
+        "active_sessions": db_session.query(TerminalSession)
+        .filter_by(device_id=device.id, status="active")
+        .count(),
+        "queued_jobs": db_session.query(Job)
+        .filter_by(device_id=device.id, status="queued")
+        .count(),
+        "running_jobs": db_session.query(Job)
+        .filter_by(device_id=device.id, status="running")
+        .count(),
+        "total_ports": len([p for p in device.ports if p.is_enabled]),
     }
 
 
 # -- Device CRUD --
 
-@admin_bp.route('/devices', methods=['POST'])
+
+@admin_bp.route("/devices", methods=["POST"])
 @login_required
 @admin_required
 def add_device():
     from flask import current_app
+
     form = DeviceForm()
     if form.validate_on_submit():
         device = Device(
@@ -299,19 +368,20 @@ def add_device():
         )
         current_app.db_session.add(device)
         current_app.db_session.commit()
-        flash('Device added.', 'success')
-    return redirect(url_for('admin.devices'))
+        flash("Device added.", "success")
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/devices/<int:device_id>/edit', methods=['POST'])
+@admin_bp.route("/devices/<int:device_id>/edit", methods=["POST"])
 @login_required
 @admin_required
 def edit_device(device_id):
     from flask import current_app
+
     device = current_app.db_session.get(Device, device_id)
     if not device:
-        flash('Device not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Device not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     form = EditDeviceForm(obj=device)
     if form.validate_on_submit():
@@ -319,54 +389,58 @@ def edit_device(device_id):
         device.display_name = form.display_name.data
         device.is_enabled = form.is_enabled.data
         current_app.db_session.commit()
-        flash('Device updated.', 'success')
-    return redirect(url_for('admin.devices'))
+        flash("Device updated.", "success")
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/devices/<int:device_id>/toggle', methods=['POST'])
+@admin_bp.route("/devices/<int:device_id>/toggle", methods=["POST"])
 @login_required
 @admin_required
 def toggle_device(device_id):
     from flask import current_app
+
     device = current_app.db_session.get(Device, device_id)
     if not device:
-        flash('Device not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Device not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     device.is_enabled = not device.is_enabled
     current_app.db_session.commit()
-    state = 'enabled' if device.is_enabled else 'disabled'
-    flash(f'Device {state}.', 'success')
-    return redirect(url_for('admin.devices'))
+    state = "enabled" if device.is_enabled else "disabled"
+    flash(f"Device {state}.", "success")
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/devices/<int:device_id>/delete', methods=['POST'])
+@admin_bp.route("/devices/<int:device_id>/delete", methods=["POST"])
 @login_required
 @admin_required
 def delete_device(device_id):
     from flask import current_app
+
     device = current_app.db_session.get(Device, device_id)
     if not device:
-        flash('Device not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Device not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     current_app.db_session.delete(device)
     current_app.db_session.commit()
-    flash('Device deleted.', 'info')
-    return redirect(url_for('admin.devices'))
+    flash("Device deleted.", "info")
+    return redirect(url_for("admin.devices"))
 
 
 # -- Port CRUD --
 
-@admin_bp.route('/devices/<int:device_id>/ports', methods=['POST'])
+
+@admin_bp.route("/devices/<int:device_id>/ports", methods=["POST"])
 @login_required
 @admin_required
 def add_port(device_id):
     from flask import current_app
+
     device = current_app.db_session.get(Device, device_id)
     if not device:
-        flash('Device not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Device not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     form = DevicePortForm()
     if form.validate_on_submit():
@@ -391,25 +465,25 @@ def add_port(device_id):
         )
         current_app.db_session.add(port)
         current_app.db_session.commit()
-        flash('Port added.', 'success')
+        flash("Port added.", "success")
     else:
         for field, errors in form.errors.items():
             for error in errors:
-                flash(f'{field}: {error}', 'danger')
+                flash(f"{field}: {error}", "danger")
 
-    return redirect(url_for('admin.devices'))
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/devices/<int:device_id>/ports/<int:port_id>/edit',
-                methods=['POST'])
+@admin_bp.route("/devices/<int:device_id>/ports/<int:port_id>/edit", methods=["POST"])
 @login_required
 @admin_required
 def edit_port(device_id, port_id):
     from flask import current_app
+
     port = current_app.db_session.get(DevicePort, port_id)
     if not port or port.device_id != device_id:
-        flash('Port not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Port not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     form = DevicePortForm(obj=port)
     if form.validate_on_submit():
@@ -431,60 +505,61 @@ def edit_port(device_id, port_id):
         port.post_transfer_cmds = form.post_transfer_cmds.data or None
         port.is_enabled = form.is_enabled.data
         current_app.db_session.commit()
-        flash('Port updated.', 'success')
+        flash("Port updated.", "success")
     else:
         for field, errors in form.errors.items():
             for error in errors:
-                flash(f'{field}: {error}', 'danger')
+                flash(f"{field}: {error}", "danger")
 
-    return redirect(url_for('admin.devices'))
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/devices/<int:device_id>/ports/<int:port_id>/toggle',
-                methods=['POST'])
+@admin_bp.route("/devices/<int:device_id>/ports/<int:port_id>/toggle", methods=["POST"])
 @login_required
 @admin_required
 def toggle_port(device_id, port_id):
     from flask import current_app
+
     port = current_app.db_session.get(DevicePort, port_id)
     if not port or port.device_id != device_id:
-        flash('Port not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Port not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     port.is_enabled = not port.is_enabled
     current_app.db_session.commit()
-    state = 'enabled' if port.is_enabled else 'disabled'
-    flash(f'Port {state}.', 'success')
-    return redirect(url_for('admin.devices'))
+    state = "enabled" if port.is_enabled else "disabled"
+    flash(f"Port {state}.", "success")
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/devices/<int:device_id>/ports/<int:port_id>/delete',
-                methods=['POST'])
+@admin_bp.route("/devices/<int:device_id>/ports/<int:port_id>/delete", methods=["POST"])
 @login_required
 @admin_required
 def delete_port(device_id, port_id):
     from flask import current_app
+
     port = current_app.db_session.get(DevicePort, port_id)
     if not port or port.device_id != device_id:
-        flash('Port not found.', 'danger')
-        return redirect(url_for('admin.devices'))
+        flash("Port not found.", "danger")
+        return redirect(url_for("admin.devices"))
 
     current_app.db_session.delete(port)
     current_app.db_session.commit()
-    flash('Port deleted.', 'info')
-    return redirect(url_for('admin.devices'))
+    flash("Port deleted.", "info")
+    return redirect(url_for("admin.devices"))
 
 
-@admin_bp.route('/jobs')
+@admin_bp.route("/jobs")
 @login_required
 @admin_required
 def jobs():
     from flask import current_app
-    page = request.args.get('page', 1, type=int)
+
+    page = request.args.get("page", 1, type=int)
     per_page = 20
-    status_filter = request.args.get('status', '').strip()
-    search = request.args.get('search', '').strip()
-    device_filter = request.args.get('device_id', '').strip()
+    status_filter = request.args.get("status", "").strip()
+    search = request.args.get("search", "").strip()
+    device_filter = request.args.get("device_id", "").strip()
 
     query = current_app.db_session.query(Job).order_by(Job.created_at.desc())
 
@@ -493,8 +568,7 @@ def jobs():
 
     if search:
         query = query.filter(
-            Job.original_filename.ilike(f'%{search}%') |
-            Job.user.has(username=search)
+            Job.original_filename.ilike(f"%{search}%") | Job.user.has(username=search)
         )
 
     device_id = _safe_int(device_filter)
@@ -506,26 +580,33 @@ def jobs():
 
     # Status counts for filter tabs
     status_counts = {}
-    for s in ('queued', 'running', 'completed', 'failed', 'canceled'):
-        status_counts[s] = current_app.db_session.query(Job).filter_by(
-            status=s).count()
+    for s in ("queued", "running", "completed", "failed", "canceled"):
+        status_counts[s] = current_app.db_session.query(Job).filter_by(status=s).count()
 
     devices = current_app.db_session.query(Device).order_by(Device.name).all()
 
-    return render_template('admin/jobs.html', jobs=jobs_list, total=total,
-                           page=page, pages=(total + per_page - 1) // per_page,
-                           status=status_filter, search=search,
-                           device_id=device_filter, devices=devices,
-                           status_counts=status_counts,
-                           per_page=per_page)
+    return render_template(
+        "admin/jobs.html",
+        jobs=jobs_list,
+        total=total,
+        page=page,
+        pages=(total + per_page - 1) // per_page,
+        status=status_filter,
+        search=search,
+        device_id=device_filter,
+        devices=devices,
+        status_counts=status_counts,
+        per_page=per_page,
+    )
 
 
-@admin_bp.route('/jobs/bulk-cancel', methods=['POST'])
+@admin_bp.route("/jobs/bulk-cancel", methods=["POST"])
 @login_required
 @admin_required
 def bulk_cancel_jobs():
     from flask import current_app
-    ids = request.form.getlist('job_ids')
+
+    ids = request.form.getlist("job_ids")
     count = 0
     for raw_id in ids:
         job_id = _safe_int(raw_id)
@@ -534,59 +615,64 @@ def bulk_cancel_jobs():
         job = current_app.db_session.get(Job, job_id)
         if not job:
             continue
-        if job.status in ('completed', 'failed', 'canceled'):
+        if job.status in ("completed", "failed", "canceled"):
             continue
         if job.cancel_requested:
             continue
-        if job.status == 'queued':
+        if job.status == "queued":
             job.cancel_requested = True
-            job.status = 'canceled'
+            job.status = "canceled"
             count += 1
-        elif job.status == 'running':
+        elif job.status == "running":
             job.cancel_requested = True
             count += 1
     current_app.db_session.commit()
-    flash(f'{count} job(s) canceled.', 'info')
-    return redirect(url_for('admin.jobs'))
+    flash(f"{count} job(s) canceled.", "info")
+    return redirect(url_for("admin.jobs"))
 
 
-@admin_bp.route('/sessions')
+@admin_bp.route("/sessions")
 @login_required
 @admin_required
 def sessions():
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
 
     from flask import current_app
-    page = request.args.get('page', 1, type=int)
+
+    page = request.args.get("page", 1, type=int)
     per_page = 20
-    search = request.args.get('search', '').strip()
-    reason_filter = request.args.get('reason', '').strip()
+    search = request.args.get("search", "").strip()
+    reason_filter = request.args.get("reason", "").strip()
 
     # Active sessions (always show all) — compute elapsed seconds
-    now_utc = datetime.now(timezone.utc)
-    active_raw = current_app.db_session.query(TerminalSession).filter_by(
-        status='active').order_by(TerminalSession.connected_at.desc()).all()
+    now_utc = datetime.now(UTC)
+    active_raw = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(status="active")
+        .order_by(TerminalSession.connected_at.desc())
+        .all()
+    )
     active = []
     for s in active_raw:
         elapsed = 0
         if s.connected_at:
             connected = s.connected_at
             if connected.tzinfo is None:
-                connected = connected.replace(tzinfo=timezone.utc)
+                connected = connected.replace(tzinfo=UTC)
             elapsed = int((now_utc - connected).total_seconds())
-        active.append({'session': s, 'elapsed': elapsed})
+        active.append({"session": s, "elapsed": elapsed})
 
     # History with filters
     history_query = (
         current_app.db_session.query(TerminalSession)
-        .filter(TerminalSession.status != 'active')
+        .filter(TerminalSession.status != "active")
         .order_by(TerminalSession.connected_at.desc())
     )
 
     if search:
         history_query = history_query.filter(
-            TerminalSession.user.has(username=search) |
-            TerminalSession.device.has(name=search)
+            TerminalSession.user.has(username=search)
+            | TerminalSession.device.has(name=search)
         )
 
     if reason_filter:
@@ -596,124 +682,153 @@ def sessions():
     history = history_query.offset((page - 1) * per_page).limit(per_page).all()
 
     # Stats
-    today_start = datetime.now(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0)
-    today_count = current_app.db_session.query(TerminalSession).filter(
-        TerminalSession.connected_at >= today_start).count()
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_count = (
+        current_app.db_session.query(TerminalSession)
+        .filter(TerminalSession.connected_at >= today_start)
+        .count()
+    )
 
     # Compute average duration for completed sessions
-    completed = current_app.db_session.query(TerminalSession).filter(
-        TerminalSession.status != 'active',
-        TerminalSession.duration_seconds.isnot(None),
-    ).all()
+    completed = (
+        current_app.db_session.query(TerminalSession)
+        .filter(
+            TerminalSession.status != "active",
+            TerminalSession.duration_seconds.isnot(None),
+        )
+        .all()
+    )
     avg_duration = (
         int(sum(s.duration_seconds for s in completed) / len(completed))
-        if completed else 0
+        if completed
+        else 0
     )
 
     # Distinct disconnect reasons for filter
     reasons = [
-        r[0] for r in current_app.db_session.query(
-            TerminalSession.disconnect_reason).filter(
+        r[0]
+        for r in current_app.db_session.query(TerminalSession.disconnect_reason)
+        .filter(
             TerminalSession.disconnect_reason.isnot(None),
-            TerminalSession.status != 'active',
-        ).distinct().all()
+            TerminalSession.status != "active",
+        )
+        .distinct()
+        .all()
     ]
 
     stats = {
-        'active_count': len(active),
-        'today_count': today_count,
-        'avg_duration': avg_duration,
+        "active_count": len(active),
+        "today_count": today_count,
+        "avg_duration": avg_duration,
     }
 
-    return render_template('admin/sessions.html',
-                           active_sessions=active, history=history,
-                           total=total, page=page,
-                           pages=(total + per_page - 1) // per_page,
-                           search=search, reason_filter=reason_filter,
-                           reasons=reasons, stats=stats)
+    return render_template(
+        "admin/sessions.html",
+        active_sessions=active,
+        history=history,
+        total=total,
+        page=page,
+        pages=(total + per_page - 1) // per_page,
+        search=search,
+        reason_filter=reason_filter,
+        reasons=reasons,
+        stats=stats,
+    )
 
 
-@admin_bp.route('/sessions/bulk-disconnect', methods=['POST'])
+@admin_bp.route("/sessions/bulk-disconnect", methods=["POST"])
 @login_required
 @admin_required
 def bulk_disconnect():
     from flask import current_app
 
-    ids = request.form.getlist('session_ids')
+    ids = request.form.getlist("session_ids")
     count = 0
     for raw_id in ids:
         sid = _safe_int(raw_id)
         if sid is None:
             continue
         session = current_app.db_session.get(TerminalSession, sid)
-        if session and session.status == 'active':
-            from retrobridge.terminal import utils as terminal_utils
+        if session and session.status == "active":
             from retrobridge import socketio
+            from retrobridge.terminal import utils as terminal_utils
+
             terminal_utils.force_disconnect_session(
-                socketio, session.id, db_session=current_app.db_session,
+                socketio,
+                session.id,
+                db_session=current_app.db_session,
             )
             count += 1
-    flash(f'{count} session(s) disconnected.', 'info')
-    return redirect(url_for('admin.sessions'))
+    flash(f"{count} session(s) disconnected.", "info")
+    return redirect(url_for("admin.sessions"))
 
 
 SETTING_MAP = {
-    'max_upload_size_mb': ('MAX_UPLOAD_SIZE_BYTES', lambda v: str(v * 1024 * 1024)),
-    'default_max_queued_jobs': ('DEFAULT_MAX_QUEUED_JOBS', str),
-    'default_max_terminal_sessions': ('DEFAULT_MAX_TERMINAL_SESSIONS', str),
-    'max_jobs_per_hour': ('MAX_JOBS_PER_HOUR', str),
-    'max_terminal_session_minutes': ('MAX_TERMINAL_SESSION_SECONDS', lambda v: str(v * 60)),
-    'terminal_idle_timeout_minutes': ('TERMINAL_IDLE_TIMEOUT_SECONDS', lambda v: str(v * 60)),
-    'worker_poll_seconds': ('WORKER_POLL_SECONDS', str),
-    'registration_open': ('REGISTRATION_OPEN', lambda v: '1' if v else '0'),
-    'maintenance_mode': ('MAINTENANCE_MODE', lambda v: '1' if v else '0'),
-    'terminal_session_log_enabled': ('TERMINAL_SESSION_LOG_ENABLED', lambda v: '1' if v else '0'),
-    'email_smtp_host': ('EMAIL_SMTP_HOST', str),
-    'email_smtp_port': ('EMAIL_SMTP_PORT', str),
-    'email_smtp_user': ('EMAIL_SMTP_USER', str),
-    'email_smtp_password': ('EMAIL_SMTP_PASSWORD', str),
-    'email_use_tls': ('EMAIL_USE_TLS', lambda v: '1' if v else '0'),
-    'email_from_address': ('EMAIL_FROM_ADDRESS', str),
-    'email_from_name': ('EMAIL_FROM_NAME', str),
+    "max_upload_size_mb": ("MAX_UPLOAD_SIZE_BYTES", lambda v: str(v * 1024 * 1024)),
+    "default_max_queued_jobs": ("DEFAULT_MAX_QUEUED_JOBS", str),
+    "default_max_terminal_sessions": ("DEFAULT_MAX_TERMINAL_SESSIONS", str),
+    "max_jobs_per_hour": ("MAX_JOBS_PER_HOUR", str),
+    "max_terminal_session_minutes": (
+        "MAX_TERMINAL_SESSION_SECONDS",
+        lambda v: str(v * 60),
+    ),
+    "terminal_idle_timeout_minutes": (
+        "TERMINAL_IDLE_TIMEOUT_SECONDS",
+        lambda v: str(v * 60),
+    ),
+    "worker_poll_seconds": ("WORKER_POLL_SECONDS", str),
+    "registration_open": ("REGISTRATION_OPEN", lambda v: "1" if v else "0"),
+    "maintenance_mode": ("MAINTENANCE_MODE", lambda v: "1" if v else "0"),
+    "terminal_session_log_enabled": (
+        "TERMINAL_SESSION_LOG_ENABLED",
+        lambda v: "1" if v else "0",
+    ),
+    "email_smtp_host": ("EMAIL_SMTP_HOST", str),
+    "email_smtp_port": ("EMAIL_SMTP_PORT", str),
+    "email_smtp_user": ("EMAIL_SMTP_USER", str),
+    "email_smtp_password": ("EMAIL_SMTP_PASSWORD", str),
+    "email_use_tls": ("EMAIL_USE_TLS", lambda v: "1" if v else "0"),
+    "email_from_address": ("EMAIL_FROM_ADDRESS", str),
+    "email_from_name": ("EMAIL_FROM_NAME", str),
 }
 
 
 def _safe_bool(value):
-    return str(value).lower() in ('1', 'true', 'yes', 'on')
+    return str(value).lower() in ("1", "true", "yes", "on")
 
 
 SETTING_REVERSE = {
-    'MAX_UPLOAD_SIZE_BYTES': lambda v: _safe_int(v, 0) // (1024 * 1024),
-    'DEFAULT_MAX_QUEUED_JOBS': lambda v: _safe_int(v, 0),
-    'DEFAULT_MAX_TERMINAL_SESSIONS': lambda v: _safe_int(v, 0),
-    'MAX_JOBS_PER_HOUR': lambda v: _safe_int(v, 0),
-    'MAX_TERMINAL_SESSION_SECONDS': lambda v: _safe_int(v, 0) // 60,
-    'TERMINAL_IDLE_TIMEOUT_SECONDS': lambda v: _safe_int(v, 0) // 60,
-    'WORKER_POLL_SECONDS': lambda v: _safe_int(v, 0),
-    'REGISTRATION_OPEN': _safe_bool,
-    'MAINTENANCE_MODE': _safe_bool,
-    'TERMINAL_SESSION_LOG_ENABLED': _safe_bool,
-    'EMAIL_SMTP_HOST': str,
-    'EMAIL_SMTP_PORT': _safe_int,
-    'EMAIL_SMTP_USER': str,
-    'EMAIL_SMTP_PASSWORD': str,
-    'EMAIL_USE_TLS': _safe_bool,
-    'EMAIL_FROM_ADDRESS': str,
-    'EMAIL_FROM_NAME': str,
+    "MAX_UPLOAD_SIZE_BYTES": lambda v: _safe_int(v, 0) // (1024 * 1024),
+    "DEFAULT_MAX_QUEUED_JOBS": lambda v: _safe_int(v, 0),
+    "DEFAULT_MAX_TERMINAL_SESSIONS": lambda v: _safe_int(v, 0),
+    "MAX_JOBS_PER_HOUR": lambda v: _safe_int(v, 0),
+    "MAX_TERMINAL_SESSION_SECONDS": lambda v: _safe_int(v, 0) // 60,
+    "TERMINAL_IDLE_TIMEOUT_SECONDS": lambda v: _safe_int(v, 0) // 60,
+    "WORKER_POLL_SECONDS": lambda v: _safe_int(v, 0),
+    "REGISTRATION_OPEN": _safe_bool,
+    "MAINTENANCE_MODE": _safe_bool,
+    "TERMINAL_SESSION_LOG_ENABLED": _safe_bool,
+    "EMAIL_SMTP_HOST": str,
+    "EMAIL_SMTP_PORT": _safe_int,
+    "EMAIL_SMTP_USER": str,
+    "EMAIL_SMTP_PASSWORD": str,
+    "EMAIL_USE_TLS": _safe_bool,
+    "EMAIL_FROM_ADDRESS": str,
+    "EMAIL_FROM_NAME": str,
 }
 
 
-@admin_bp.route('/settings', methods=['GET', 'POST'])
+@admin_bp.route("/settings", methods=["GET", "POST"])
 @login_required
 @admin_required
 def settings():
     from flask import current_app
+
     form = SettingsForm()
 
-    if request.method == 'GET':
+    if request.method == "GET":
         for field_name, (key, _) in SETTING_MAP.items():
-            if field_name == 'email_smtp_password':
+            if field_name == "email_smtp_password":
                 continue  # never round-trip the SMTP password into the form
             setting = current_app.db_session.get(AdminSetting, key)
             if setting and field_name in form._fields:
@@ -723,8 +838,10 @@ def settings():
         for field_name, (key, formatter) in SETTING_MAP.items():
             if field_name not in form._fields:
                 continue
-            if (field_name == 'email_smtp_password'
-                    and not form._fields[field_name].data):
+            if (
+                field_name == "email_smtp_password"
+                and not form._fields[field_name].data
+            ):
                 continue  # blank = keep the current password
             value = str(formatter(form._fields[field_name].data))
             setting = current_app.db_session.get(AdminSetting, key)
@@ -733,7 +850,7 @@ def settings():
             else:
                 current_app.db_session.add(AdminSetting(key=key, value=value))
         current_app.db_session.commit()
-        flash('Settings saved.', 'success')
-        return redirect(url_for('admin.settings'))
+        flash("Settings saved.", "success")
+        return redirect(url_for("admin.settings"))
 
-    return render_template('admin/settings.html', form=form)
+    return render_template("admin/settings.html", form=form)

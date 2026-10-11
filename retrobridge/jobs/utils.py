@@ -1,6 +1,6 @@
 """Job utility functions — create, query, cancel, and rate-limit jobs."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import text
@@ -8,32 +8,32 @@ from werkzeug.utils import secure_filename
 
 from retrobridge.models import Device, Job, User
 
-ALLOWED_EXTENSIONS = {'bin', 'hex', 'obj', 'asm', 's', 'txt'}
-TEXT_EXTENSIONS = {'txt', 'asm', 's', 'hex'}
-BINARY_EXTENSIONS = {'bin', 'obj'}
+ALLOWED_EXTENSIONS = {"bin", "hex", "obj", "asm", "s", "txt"}
+TEXT_EXTENSIONS = {"txt", "asm", "s", "hex"}
+BINARY_EXTENSIONS = {"bin", "obj"}
 
 # Signatures of modern executable formats — reject these as they are
 # clearly not vintage minicomputer programs.
 _REJECT_SIGNATURES = (
-    (0, b'\x7fELF', 'ELF executable'),
-    (0, b'MZ', 'DOS/PE executable'),
-    (0, b'\xcf\xfa\xed\xfe', 'Mach-O 64-bit executable'),
-    (0, b'\xce\xfa\xed\xfe', 'Mach-O 32-bit executable'),
-    (0, b'\xfe\xed\xfa\xce', 'Mach-O 64-bit (reverse)'),
-    (0, b'\xfe\xed\xfa\xcf', 'Mach-O 32-bit (reverse)'),
-    (0, b'\xca\xfe\xba\xbe', 'Mach-O universal binary'),
-    (0, b'\xbe\xba\xfe\xca', 'Mach-O universal (reverse)'),
-    (0, b'\x00\x00\x01\x00', 'Windows icon'),
-    (0, b'PK\x03\x04', 'ZIP archive'),
-    (0, b'\x1f\x8b', 'gzip archive'),
-    (0, b'Rar!\x1a\x07', 'RAR archive'),
-    (0, b'\xed\xab\xee\xdb', 'RPM package'),
-    (0, b'BZh', 'bzip2 archive'),
-    (0, b'\x89PNG', 'PNG image'),
-    (0, b'\xff\xd8\xff', 'JPEG image'),
-    (0, b'GIF8', 'GIF image'),
-    (0, b'%PDF', 'PDF document'),
-    (0, b'\xd0\xcf\x11\xe0', 'OLE2/MS Office document'),
+    (0, b"\x7fELF", "ELF executable"),
+    (0, b"MZ", "DOS/PE executable"),
+    (0, b"\xcf\xfa\xed\xfe", "Mach-O 64-bit executable"),
+    (0, b"\xce\xfa\xed\xfe", "Mach-O 32-bit executable"),
+    (0, b"\xfe\xed\xfa\xce", "Mach-O 64-bit (reverse)"),
+    (0, b"\xfe\xed\xfa\xcf", "Mach-O 32-bit (reverse)"),
+    (0, b"\xca\xfe\xba\xbe", "Mach-O universal binary"),
+    (0, b"\xbe\xba\xfe\xca", "Mach-O universal (reverse)"),
+    (0, b"\x00\x00\x01\x00", "Windows icon"),
+    (0, b"PK\x03\x04", "ZIP archive"),
+    (0, b"\x1f\x8b", "gzip archive"),
+    (0, b"Rar!\x1a\x07", "RAR archive"),
+    (0, b"\xed\xab\xee\xdb", "RPM package"),
+    (0, b"BZh", "bzip2 archive"),
+    (0, b"\x89PNG", "PNG image"),
+    (0, b"\xff\xd8\xff", "JPEG image"),
+    (0, b"GIF8", "GIF image"),
+    (0, b"%PDF", "PDF document"),
+    (0, b"\xd0\xcf\x11\xe0", "OLE2/MS Office document"),
 )
 
 _MIN_UPLOAD_READ = 1024
@@ -54,95 +54,97 @@ def validate_file_content(file_storage, filename):
     Returns ``None`` on success.  Raises ``ValueError`` with a
     human-readable message on rejection.
     """
-    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError(f'Unsupported file type: .{ext}')
+        raise ValueError(f"Unsupported file type: .{ext}")
 
     try:
         file_storage.seek(0)
         header = file_storage.read(_MIN_UPLOAD_READ)
         file_storage.seek(0)
-    except Exception:
-        raise ValueError('Unable to read file content')
+    except (OSError, ValueError):
+        raise ValueError("Unable to read file content")
 
     if not header:
-        raise ValueError('File is empty')
+        raise ValueError("File is empty")
 
     # --- Check for modern executable / archive / image signatures ---
     for offset, sig, label in _REJECT_SIGNATURES:
-        if len(header) >= offset + len(sig):
-            if header[offset:offset + len(sig)] == sig:
-                raise ValueError(f'File appears to be a {label} — not allowed')
+        if (
+            len(header) >= offset + len(sig)
+            and header[offset : offset + len(sig)] == sig
+        ):
+            raise ValueError(f"File appears to be a {label} — not allowed")
 
     # --- Text extension checks ---
     if ext in TEXT_EXTENSIONS:
         # Detect binary content: null bytes or high-bit bytes without
         # any printable ASCII structure.
-        if b'\x00' in header:
+        if b"\x00" in header:
             raise ValueError(
-                f'File has a .{ext} extension but contains binary data '
-                '(null bytes detected). Only plain text is accepted '
-                'for this file type.'
+                f"File has a .{ext} extension but contains binary data "
+                "(null bytes detected). Only plain text is accepted "
+                "for this file type."
             )
         try:
-            header.decode('ascii')
+            header.decode("ascii")
         except UnicodeDecodeError:
-            text = header.decode('utf-8', errors='replace')
-            if '\ufffd' in text:
+            text = header.decode("utf-8", errors="replace")
+            if "\ufffd" in text:
                 raise ValueError(
-                    f'File has a .{ext} extension but contains non-text '
-                    'data. Only plain ASCII text is accepted for this '
-                    'file type.'
+                    f"File has a .{ext} extension but contains non-text "
+                    "data. Only plain ASCII text is accepted for this "
+                    "file type."
                 )
 
         # Intel HEX specific: first non-whitespace char must be ':'
-        if ext == 'hex':
+        if ext == "hex":
             stripped = header.lstrip()
-            if stripped and stripped[0:1] != b':':
+            if stripped and stripped[0:1] != b":":
                 raise ValueError(
-                    'Intel HEX files must begin with a colon (:). '
-                    'The uploaded file does not appear to be in Intel '
-                    'HEX format.'
+                    "Intel HEX files must begin with a colon (:). "
+                    "The uploaded file does not appear to be in Intel "
+                    "HEX format."
                 )
-
 
 
 def job_status_dict(job):
     return {
-        'id': job.id,
-        'status': job.status,
-        'device': job.device.name if job.device else None,
-        'created_at': job.created_at.isoformat() if job.created_at else None,
-        'started_at': job.started_at.isoformat() if job.started_at else None,
-        'finished_at': job.finished_at.isoformat() if job.finished_at else None,
-        'runtime_seconds': job.runtime_seconds,
-        'error_message': job.error_message,
-        'exit_code': job.exit_code,
-        'output_path': bool(job.output_path),
+        "id": job.id,
+        "status": job.status,
+        "device": job.device.name if job.device else None,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "runtime_seconds": job.runtime_seconds,
+        "error_message": job.error_message,
+        "exit_code": job.exit_code,
+        "output_path": bool(job.output_path),
     }
 
 
 def load_output_content(job):
     if not job.output_path:
-        return ''
+        return ""
     try:
-        with open(job.output_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(job.output_path, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
     except OSError:
-        return ''
+        return ""
 
 
 def get_user_quota(db_session, user):
     queued_running = (
         db_session.query(Job)
         .filter_by(user_id=user.id)
-        .filter(Job.status.in_(['queued', 'running']))
+        .filter(Job.status.in_(["queued", "running"]))
         .count()
     )
 
     max_jobs = user.max_queued_jobs
     if user.patreon_tier:
         from retrobridge.integrations.patreon import get_tier_limits
+
         tier_jobs, _ = get_tier_limits(user.patreon_tier)
         if tier_jobs and tier_jobs > max_jobs:
             max_jobs = tier_jobs
@@ -156,11 +158,12 @@ def get_user_quota(db_session, user):
 
 def check_rate_limit(db_session, user_id):
     from retrobridge.admin.settings_utils import get_int
-    max_per_hour = get_int('MAX_JOBS_PER_HOUR')
+
+    max_per_hour = get_int("MAX_JOBS_PER_HOUR")
     if max_per_hour <= 0:
         return False, 0
 
-    hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    hour_ago = datetime.now(UTC) - timedelta(hours=1)
     recent_count = (
         db_session.query(Job)
         .filter_by(user_id=user_id)
@@ -170,14 +173,23 @@ def check_rate_limit(db_session, user_id):
     return recent_count >= max_per_hour, max_per_hour
 
 
-def create_job(db_session, user_id, device_id, filename, file_obj,
-               upload_dir, priority=0, newline_mode='',
-               pre_transfer_cmds='', post_transfer_cmds=''):
+def create_job(
+    db_session,
+    user_id,
+    device_id,
+    filename,
+    file_obj,
+    upload_dir,
+    priority=0,
+    newline_mode="",
+    pre_transfer_cmds="",
+    post_transfer_cmds="",
+):
     device = db_session.get(Device, device_id)
     if not device:
-        raise ValueError('Device does not exist.')
+        raise ValueError("Device does not exist.")
     if not device.is_enabled:
-        raise ValueError('Device is currently disabled.')
+        raise ValueError("Device is currently disabled.")
 
     # Re-check quota and rate limit at creation time: the route's earlier
     # checks are advisory and two concurrent submissions could both pass.
@@ -189,48 +201,44 @@ def create_job(db_session, user_id, device_id, filename, file_obj,
     raw_session = db_session()
     if raw_session.in_transaction() and (raw_session.dirty or raw_session.new):
         raise RuntimeError(
-            'create_job must be called with no pending writes in the session'
+            "create_job must be called with no pending writes in the session"
         )
     if raw_session.in_transaction():
         raw_session.rollback()
-    raw_session.execute(text('BEGIN IMMEDIATE'))
+    raw_session.execute(text("BEGIN IMMEDIATE"))
 
     user = db_session.get(User, user_id)
     if user is None:
-        raise ValueError('User does not exist.')
+        raise ValueError("User does not exist.")
 
     _, _, exceeded = get_user_quota(db_session, user)
     if exceeded:
-        raise ValueError(
-            'You have reached your maximum number of queued/running jobs.'
-        )
+        raise ValueError("You have reached your maximum number of queued/running jobs.")
     rate_limited, max_per_hour = check_rate_limit(db_session, user_id)
     if rate_limited:
-        raise ValueError(
-            f'Rate limit reached: {max_per_hour} jobs per hour.'
-        )
+        raise ValueError(f"Rate limit reached: {max_per_hour} jobs per hour.")
 
-    safe_name = secure_filename(filename or 'program.bin')
+    safe_name = secure_filename(filename or "program.bin")
 
     validate_file_content(file_obj, safe_name)
 
     from retrobridge.admin.settings_utils import get_int
-    max_size = get_int('MAX_UPLOAD_SIZE_BYTES')
+
+    max_size = get_int("MAX_UPLOAD_SIZE_BYTES")
     if max_size > 0:
         file_obj.seek(0, 2)
         size = file_obj.tell()
         file_obj.seek(0)
         if size > max_size:
             raise ValueError(
-                f'File size ({size} bytes) exceeds maximum '
-                f'({max_size} bytes).'
+                f"File size ({size} bytes) exceeds maximum ({max_size} bytes)."
             )
 
     job = Job(
         user_id=user_id,
         device_id=device_id,
         original_filename=safe_name,
-        status='queued',
+        status="queued",
         priority=priority or 0,
         override_newline_mode=newline_mode or None,
         override_pre_transfer_cmds=pre_transfer_cmds or None,
@@ -239,7 +247,7 @@ def create_job(db_session, user_id, device_id, filename, file_obj,
     db_session.add(job)
     db_session.flush()
 
-    job_dir = Path(upload_dir) / f'job-{job.id}'
+    job_dir = Path(upload_dir) / f"job-{job.id}"
     job_dir.mkdir(parents=True, exist_ok=True)
     file_path = job_dir / safe_name
     file_obj.save(str(file_path))
@@ -254,29 +262,29 @@ def create_job(db_session, user_id, device_id, filename, file_obj,
 def cancel_job(db_session, job_id, user_id, is_admin=False):
     job = db_session.get(Job, job_id)
     if not job:
-        return False, 'Job not found'
+        return False, "Job not found"
 
     if job.user_id != user_id and not is_admin:
-        return False, 'Not authorized'
+        return False, "Not authorized"
 
-    if job.status in ('completed', 'failed', 'canceled'):
-        return False, 'Job already finished'
+    if job.status in ("completed", "failed", "canceled"):
+        return False, "Job already finished"
 
     if job.cancel_requested:
-        return False, 'Cancellation already requested'
+        return False, "Cancellation already requested"
 
-    if job.status == 'queued':
+    if job.status == "queued":
         job.cancel_requested = True
-        job.status = 'canceled'
+        job.status = "canceled"
         db_session.commit()
-        return True, 'Job canceled'
+        return True, "Job canceled"
 
-    if job.status == 'running' and is_admin:
+    if job.status == "running" and is_admin:
         job.cancel_requested = True
         db_session.commit()
-        return True, 'Cancellation requested — worker will stop shortly'
+        return True, "Cancellation requested — worker will stop shortly"
 
-    return False, 'Cannot cancel a running job'
+    return False, "Cannot cancel a running job"
 
 
 def get_job_or_403(db_session, job_id, user_id, is_admin=False):
@@ -290,6 +298,7 @@ def get_job_or_403(db_session, job_id, user_id, is_admin=False):
 
 def get_device_choices(db_session):
     from retrobridge.models import Device
+
     devices = db_session.query(Device).filter_by(is_enabled=True).all()
     return [(d.id, d.display_name or d.name) for d in devices], devices
 
@@ -303,13 +312,13 @@ def read_output_tail(output_path, tail=None):
     """
     try:
         if not tail or tail < 1:
-            with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
-                return [line.rstrip('\n') for line in f]
+            with open(output_path, "r", encoding="utf-8", errors="replace") as f:
+                return [line.rstrip("\n") for line in f]
     except FileNotFoundError:
         return []
 
     try:
-        with open(output_path, 'rb') as f:
+        with open(output_path, "rb") as f:
             f.seek(0, 2)
             size = f.tell()
             if size == 0:
@@ -325,64 +334,78 @@ def read_output_tail(output_path, tail=None):
                 f.seek(pos)
                 chunk = f.read(step)
                 chunks.insert(0, chunk)
-                newlines += chunk.count(b'\n')
+                newlines += chunk.count(b"\n")
 
-            data = b''.join(chunks)
-            text = data.decode('utf-8', errors='replace')
+            data = b"".join(chunks)
+            text = data.decode("utf-8", errors="replace")
             # Match text-mode universal newline behavior of the old code.
-            text = text.replace('\r\n', '\n').replace('\r', '\n')
-            lines = text.split('\n')
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            lines = text.split("\n")
             if pos > 0:
                 lines.pop(0)  # first line is partial (we started mid-line)
-            if lines and lines[-1] == '' and text.endswith('\n'):
+            if lines and lines[-1] == "" and text.endswith("\n"):
                 lines.pop()
             if len(lines) > tail:
                 lines = lines[-tail:]
-            return [line.rstrip('\n') for line in lines]
+            return [line.rstrip("\n") for line in lines]
     except FileNotFoundError:
         return []
 
 
 def get_device_stats(db_session, is_admin=False):
     from retrobridge.models import Device, DevicePort, TerminalSession
-    devices = db_session.query(Device).filter_by(is_enabled=True).order_by(Device.name).all()
+
+    devices = (
+        db_session.query(Device).filter_by(is_enabled=True).order_by(Device.name).all()
+    )
     stats = []
     for d in devices:
         ports = db_session.query(DevicePort).filter_by(device_id=d.id).all()
-        job_ports = [p for p in ports if p.purpose == 'job_queue']
-        interactive_ports = [p for p in ports if p.purpose == 'interactive' and p.is_enabled]
-        active_sessions = db_session.query(TerminalSession).filter_by(
-            device_id=d.id, status='active').count()
-        queue_count = db_session.query(Job).filter_by(
-            device_id=d.id, status='queued').count()
-        running_count = db_session.query(Job).filter_by(
-            device_id=d.id, status='running').count()
+        job_ports = [p for p in ports if p.purpose == "job_queue"]
+        interactive_ports = [
+            p for p in ports if p.purpose == "interactive" and p.is_enabled
+        ]
+        active_sessions = (
+            db_session.query(TerminalSession)
+            .filter_by(device_id=d.id, status="active")
+            .count()
+        )
+        queue_count = (
+            db_session.query(Job).filter_by(device_id=d.id, status="queued").count()
+        )
+        running_count = (
+            db_session.query(Job).filter_by(device_id=d.id, status="running").count()
+        )
         ports_data = []
         for p in ports:
             port_info = {
-                'id': p.id,
-                'label': p.port_label,
-                'purpose': p.purpose,
-                'baud': p.baud,
-                'transport': p.transport or 'serial',
-                'is_enabled': p.is_enabled,
-                'newline_mode': p.newline_mode,
-                'transfer_protocol': p.transfer_protocol,
+                "id": p.id,
+                "label": p.port_label,
+                "purpose": p.purpose,
+                "baud": p.baud,
+                "transport": p.transport or "serial",
+                "is_enabled": p.is_enabled,
+                "newline_mode": p.newline_mode,
+                "transfer_protocol": p.transfer_protocol,
             }
             if is_admin:
-                port_info['pre_cmds'] = p.pre_transfer_cmds
-                port_info['post_cmds'] = p.post_transfer_cmds
+                port_info["pre_cmds"] = p.pre_transfer_cmds
+                port_info["post_cmds"] = p.post_transfer_cmds
             ports_data.append(port_info)
-        stats.append({
-            'id': d.id,
-            'name': d.name,
-            'display_name': d.display_name or d.name,
-            'is_enabled': d.is_enabled,
-            'queue_count': queue_count,
-            'running_count': running_count,
-            'interactive_ports': len(interactive_ports),
-            'interactive_available': max(0, len(interactive_ports) - active_sessions),
-            'job_ports': len(job_ports),
-            'ports': ports_data,
-        })
+        stats.append(
+            {
+                "id": d.id,
+                "name": d.name,
+                "display_name": d.display_name or d.name,
+                "is_enabled": d.is_enabled,
+                "queue_count": queue_count,
+                "running_count": running_count,
+                "interactive_ports": len(interactive_ports),
+                "interactive_available": max(
+                    0, len(interactive_ports) - active_sessions
+                ),
+                "job_ports": len(job_ports),
+                "ports": ports_data,
+            }
+        )
     return stats

@@ -6,230 +6,303 @@ from flask.cli import AppGroup
 
 
 def _human_size(bytes_val):
-    for unit in ('B', 'KB', 'MB', 'GB'):
+    for unit in ("B", "KB", "MB", "GB"):
         if bytes_val < 1024:
-            return f'{bytes_val:.1f} {unit}'
+            return f"{bytes_val:.1f} {unit}"
         bytes_val /= 1024
-    return f'{bytes_val:.1f} TB'
+    return f"{bytes_val:.1f} TB"
 
 
 def _auto_backup(app):
     from retrobridge.backup import backup_database
-    db_uri = app.config['SQLALCHEMY_DATABASE_URI']
-    backup_dir = app.config.get('BACKUP_DIR',
-                                 os.path.join(os.path.dirname(__file__), 'backups'))
+
+    db_uri = app.config["SQLALCHEMY_DATABASE_URI"]
+    backup_dir = app.config.get(
+        "BACKUP_DIR", os.path.join(os.path.dirname(__file__), "backups")
+    )
     backup_dir = os.path.abspath(backup_dir)
     try:
-        path = backup_database(db_uri, backup_dir, compress=True, label='pre-init')
-        click.echo(f'Auto-backup before init: {path}')
+        path = backup_database(db_uri, backup_dir, compress=True, label="pre-init")
+        click.echo(f"Auto-backup before init: {path}")
     except FileNotFoundError:
         pass
 
 
 def register_cli_commands(app):
-    db_cli = AppGroup('db')
+    db_cli = AppGroup("db")
 
-    @db_cli.command('init')
+    @db_cli.command("init")
     def init_db():
         from retrobridge.models import Base
+
         Base.metadata.create_all(bind=app.db_engine)
-        click.echo('Database tables created.')
+        click.echo("Database tables created.")
 
-    @db_cli.command('backup')
-    @click.option('--no-compress', is_flag=True, help='Skip gzip compression')
-    @click.option('--label', default=None, help='Optional label embedded in filename')
+    @db_cli.command("backup")
+    @click.option("--no-compress", is_flag=True, help="Skip gzip compression")
+    @click.option("--label", default=None, help="Optional label embedded in filename")
     def db_backup(no_compress, label):
-        from retrobridge.backup import backup_database, prune_backups, list_backups
+        from retrobridge.backup import backup_database, prune_backups
 
-        db_uri = app.config['SQLALCHEMY_DATABASE_URI']
-        backup_dir = app.config.get('BACKUP_DIR', os.path.join(app.instance_path, '..', 'backups'))
+        db_uri = app.config["SQLALCHEMY_DATABASE_URI"]
+        backup_dir = app.config.get(
+            "BACKUP_DIR", os.path.join(app.instance_path, "..", "backups")
+        )
         backup_dir = os.path.abspath(backup_dir)
 
         os.makedirs(backup_dir, exist_ok=True)
-        path = backup_database(db_uri, backup_dir, compress=not no_compress, label=label)
+        path = backup_database(
+            db_uri, backup_dir, compress=not no_compress, label=label
+        )
 
         size = os.path.getsize(path)
-        click.echo(f'Backup created: {path} ({_human_size(size)})')
+        click.echo(f"Backup created: {path} ({_human_size(size)})")
 
-        retention_days = app.config.get('BACKUP_RETENTION_DAYS', 30)
-        retention_count = app.config.get('BACKUP_RETENTION_COUNT', 10)
+        retention_days = app.config.get("BACKUP_RETENTION_DAYS", 30)
+        retention_count = app.config.get("BACKUP_RETENTION_COUNT", 10)
         removed = prune_backups(backup_dir, retention_days, retention_count)
         for r in removed:
-            click.echo(f'  Pruned old backup: {os.path.basename(r)}')
+            click.echo(f"  Pruned old backup: {os.path.basename(r)}")
 
-    @db_cli.command('restore')
-    @click.argument('backup_path', type=click.Path(exists=True))
-    @click.confirmation_option(prompt='This will OVERWRITE the current database. Continue?')
+    @db_cli.command("restore")
+    @click.argument("backup_path", type=click.Path(exists=True))
+    @click.confirmation_option(
+        prompt="This will OVERWRITE the current database. Continue?"
+    )
     def db_restore(backup_path):
         from retrobridge.backup import restore_database
 
-        db_uri = app.config['SQLALCHEMY_DATABASE_URI']
+        db_uri = app.config["SQLALCHEMY_DATABASE_URI"]
         path = restore_database(backup_path, db_uri)
-        click.echo(f'Database restored from: {backup_path}')
-        click.echo(f'Target database: {path}')
+        click.echo(f"Database restored from: {backup_path}")
+        click.echo(f"Target database: {path}")
 
-    @db_cli.command('list-backups')
-    @click.option('--human-readable', '-h', is_flag=True, help='Show sizes in human-readable format')
+    @db_cli.command("list-backups")
+    @click.option(
+        "--human-readable",
+        "-h",
+        is_flag=True,
+        help="Show sizes in human-readable format",
+    )
     def db_list_backups(human_readable):
         from retrobridge.backup import list_backups
 
-        backup_dir = app.config.get('BACKUP_DIR', os.path.join(app.instance_path, '..', 'backups'))
+        backup_dir = app.config.get(
+            "BACKUP_DIR", os.path.join(app.instance_path, "..", "backups")
+        )
         backup_dir = os.path.abspath(backup_dir)
 
         backups = list_backups(backup_dir)
         if not backups:
-            click.echo('No backups found.')
+            click.echo("No backups found.")
             return
 
-        click.echo(f'{"Filename":<50} {"Size":>10}  {"Modified (UTC)":<20}')
-        click.echo('-' * 82)
+        click.echo(f"{'Filename':<50} {'Size':>10}  {'Modified (UTC)':<20}")
+        click.echo("-" * 82)
         for b in backups:
-            size = _human_size(b['size_bytes']) if human_readable else str(b['size_bytes'])
-            click.echo(f'{b["filename"]:<50} {size:>10}  {b["modified"].strftime("%Y-%m-%d %H:%M:%S"):<20}')
-        click.echo(f'\n{len(backups)} backup(s) in {backup_dir}')
+            size = (
+                _human_size(b["size_bytes"]) if human_readable else str(b["size_bytes"])
+            )
+            click.echo(
+                f"{b['filename']:<50} {size:>10}  {b['modified'].strftime('%Y-%m-%d %H:%M:%S'):<20}"
+            )
+        click.echo(f"\n{len(backups)} backup(s) in {backup_dir}")
 
-    @db_cli.command('migrate-tokens')
+    @db_cli.command("migrate-tokens")
     def db_migrate_tokens():
         from retrobridge.integrations.patreon_crypto import encrypt_token
         from retrobridge.models import User
+
         s = app.db_session
         users = s.query(User).all()
         count = 0
         for user in users:
-            access = getattr(user, '_patreon_access_token', None)
-            refresh = getattr(user, '_patreon_refresh_token', None)
+            access = getattr(user, "_patreon_access_token", None)
+            refresh = getattr(user, "_patreon_refresh_token", None)
             if access or refresh:
                 user._patreon_access_token = encrypt_token(access) if access else None
-                user._patreon_refresh_token = encrypt_token(refresh) if refresh else None
+                user._patreon_refresh_token = (
+                    encrypt_token(refresh) if refresh else None
+                )
                 count += 1
         s.commit()
-        click.echo(f'Encrypted Patreon tokens for {count} user(s).')
+        click.echo(f"Encrypted Patreon tokens for {count} user(s).")
 
     app.cli.add_command(db_cli)
 
-    @app.cli.command('init-db')
+    @app.cli.command("init-db")
     def init_db_alias():
         _auto_backup(app)
-        from retrobridge.models import Base
         from sqlalchemy import inspect, text
+
+        from retrobridge.models import Base
+
         Base.metadata.create_all(bind=app.db_engine)
 
         inspector = inspect(app.db_engine)
-        if 'jobs' in inspector.get_table_names():
-            existing_cols = {c['name'] for c in inspector.get_columns('jobs')}
-            if 'cancel_requested' not in existing_cols:
+        if "jobs" in inspector.get_table_names():
+            existing_cols = {c["name"] for c in inspector.get_columns("jobs")}
+            if "cancel_requested" not in existing_cols:
                 with app.db_engine.connect() as conn:
-                    conn.execute(text(
-                        "ALTER TABLE jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT 0"
-                    ))
+                    conn.execute(
+                        text(
+                            "ALTER TABLE jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT 0"
+                        )
+                    )
                     conn.commit()
-                click.echo('Migration: added cancel_requested column to jobs.')
+                click.echo("Migration: added cancel_requested column to jobs.")
 
-        click.echo('Database tables created.')
+        click.echo("Database tables created.")
 
-    @app.cli.command('seed')
-    @click.option('--admin-password', default=None,
-                  help='Password for the admin user (required when '
-                       'FLASK_ENV=production).')
+    @app.cli.command("seed")
+    @click.option(
+        "--admin-password",
+        default=None,
+        help="Password for the admin user (required when FLASK_ENV=production).",
+    )
     def seed(admin_password):
         from werkzeug.security import generate_password_hash
-        from retrobridge.models import User, Device, DevicePort, AdminSetting
+
+        from retrobridge.models import AdminSetting, Device, DevicePort, User
 
         s = app.db_session
 
-        is_production = (
-            os.environ.get('FLASK_ENV') == 'production'
-            or (app.config.get('DEBUG') is False
-                and app.config.get('TESTING') is False)
+        is_production = os.environ.get("FLASK_ENV") == "production" or (
+            app.config.get("DEBUG") is False and app.config.get("TESTING") is False
         )
 
         if not s.get(User, 1):
             if is_production and not admin_password:
                 raise click.ClickException(
-                    'Refusing to seed the default admin/admin user in '
-                    'production. Re-run with an explicit password: '
-                    'flask seed --admin-password <password>'
+                    "Refusing to seed the default admin/admin user in "
+                    "production. Re-run with an explicit password: "
+                    "flask seed --admin-password <password>"
                 )
             admin = User(
-                username='admin',
-                email='admin@retrobridge.local',
+                username="admin",
+                email="admin@retrobridge.local",
                 password_hash=generate_password_hash(
-                    admin_password if admin_password else 'admin'),
-                full_name='Administrator',
+                    admin_password if admin_password else "admin"
+                ),
+                full_name="Administrator",
                 is_admin=True,
                 max_queued_jobs=10,
                 max_terminal_sessions=5,
             )
             s.add(admin)
 
-        if not s.query(Device).filter_by(name='centurion').first():
+        if not s.query(Device).filter_by(name="centurion").first():
             centurion = Device(
-                name='centurion',
-                display_name='Centurion CPU-6',
+                name="centurion",
+                display_name="Centurion CPU-6",
                 is_enabled=True,
             )
             s.add(centurion)
             s.flush()
-            s.add(DevicePort(
-                device_id=centurion.id, port_label='TTY0', dev_path='/dev/centurion_tty0',
-                transport='serial', purpose='job_queue', baud=9600,
-            ))
-            s.add(DevicePort(
-                device_id=centurion.id, port_label='TTY1', dev_path='/dev/centurion_tty1',
-                transport='serial', purpose='interactive', baud=9600,
-                max_runtime_seconds=3600, idle_timeout_seconds=300,
-            ))
+            s.add(
+                DevicePort(
+                    device_id=centurion.id,
+                    port_label="TTY0",
+                    dev_path="/dev/centurion_tty0",
+                    transport="serial",
+                    purpose="job_queue",
+                    baud=9600,
+                )
+            )
+            s.add(
+                DevicePort(
+                    device_id=centurion.id,
+                    port_label="TTY1",
+                    dev_path="/dev/centurion_tty1",
+                    transport="serial",
+                    purpose="interactive",
+                    baud=9600,
+                    max_runtime_seconds=3600,
+                    idle_timeout_seconds=300,
+                )
+            )
 
-        if not s.query(Device).filter_by(name='pdp11').first():
+        if not s.query(Device).filter_by(name="pdp11").first():
             pdp11 = Device(
-                name='pdp11',
-                display_name='DEC PDP-11/44',
+                name="pdp11",
+                display_name="DEC PDP-11/44",
                 is_enabled=True,
             )
             s.add(pdp11)
             s.flush()
-            s.add(DevicePort(
-                device_id=pdp11.id, port_label='TTY0', dev_path='/dev/pdp11_tty0',
-                transport='serial', purpose='job_queue', baud=9600,
-            ))
-            s.add(DevicePort(
-                device_id=pdp11.id, port_label='TTY1', dev_path='/dev/pdp11_tty1',
-                transport='serial', purpose='interactive', baud=9600,
-                max_runtime_seconds=3600, idle_timeout_seconds=300,
-            ))
+            s.add(
+                DevicePort(
+                    device_id=pdp11.id,
+                    port_label="TTY0",
+                    dev_path="/dev/pdp11_tty0",
+                    transport="serial",
+                    purpose="job_queue",
+                    baud=9600,
+                )
+            )
+            s.add(
+                DevicePort(
+                    device_id=pdp11.id,
+                    port_label="TTY1",
+                    dev_path="/dev/pdp11_tty1",
+                    transport="serial",
+                    purpose="interactive",
+                    baud=9600,
+                    max_runtime_seconds=3600,
+                    idle_timeout_seconds=300,
+                )
+            )
 
         default_settings = {
-            'MAX_UPLOAD_SIZE_BYTES': ('16777216', 'Maximum file upload size in bytes'),
-            'DEFAULT_MAX_QUEUED_JOBS': ('3', 'Default max queued jobs per user'),
-            'DEFAULT_MAX_TERMINAL_SESSIONS': ('1', 'Default max terminal sessions per user'),
-            'MAX_JOBS_PER_HOUR': ('10', 'Max job submissions per user per hour'),
-            'MAX_TERMINAL_SESSION_SECONDS': ('3600', 'Max terminal session duration in seconds'),
-            'TERMINAL_IDLE_TIMEOUT_SECONDS': ('300', 'Terminal idle timeout in seconds'),
-            'WORKER_POLL_SECONDS': ('5', 'Worker poll interval in seconds'),
-            'REGISTRATION_OPEN': ('1', 'Whether new user registration is allowed'),
-            'MAINTENANCE_MODE': ('0', 'Site-wide maintenance mode toggle'),
-            'TERMINAL_SESSION_LOG_ENABLED': ('0', 'Log keystrokes and output for terminal sessions'),
-            'PATREON_CLIENT_ID': ('', 'Patreon OAuth client ID'),
-            'PATREON_CLIENT_SECRET': ('', 'Patreon OAuth client secret'),
-            'PATREON_CAMPAIGN_ID': ('', 'Patreon campaign ID for membership lookup'),
-            'PATREON_TIER_BRONZE_JOBS': ('10', 'Max queued jobs for Bronze tier'),
-            'PATREON_TIER_BRONZE_SESSIONS': ('3', 'Max terminal sessions for Bronze tier'),
-            'PATREON_TIER_SILVER_JOBS': ('50', 'Max queued jobs for Silver tier'),
-            'PATREON_TIER_SILVER_SESSIONS': ('10', 'Max terminal sessions for Silver tier'),
-            'PATREON_TIER_GOLD_JOBS': ('999', 'Max queued jobs for Gold tier'),
-            'PATREON_TIER_GOLD_SESSIONS': ('20', 'Max terminal sessions for Gold tier'),
+            "MAX_UPLOAD_SIZE_BYTES": ("16777216", "Maximum file upload size in bytes"),
+            "DEFAULT_MAX_QUEUED_JOBS": ("3", "Default max queued jobs per user"),
+            "DEFAULT_MAX_TERMINAL_SESSIONS": (
+                "1",
+                "Default max terminal sessions per user",
+            ),
+            "MAX_JOBS_PER_HOUR": ("10", "Max job submissions per user per hour"),
+            "MAX_TERMINAL_SESSION_SECONDS": (
+                "3600",
+                "Max terminal session duration in seconds",
+            ),
+            "TERMINAL_IDLE_TIMEOUT_SECONDS": (
+                "300",
+                "Terminal idle timeout in seconds",
+            ),
+            "WORKER_POLL_SECONDS": ("5", "Worker poll interval in seconds"),
+            "REGISTRATION_OPEN": ("1", "Whether new user registration is allowed"),
+            "MAINTENANCE_MODE": ("0", "Site-wide maintenance mode toggle"),
+            "TERMINAL_SESSION_LOG_ENABLED": (
+                "0",
+                "Log keystrokes and output for terminal sessions",
+            ),
+            "PATREON_CLIENT_ID": ("", "Patreon OAuth client ID"),
+            "PATREON_CLIENT_SECRET": ("", "Patreon OAuth client secret"),
+            "PATREON_CAMPAIGN_ID": ("", "Patreon campaign ID for membership lookup"),
+            "PATREON_TIER_BRONZE_JOBS": ("10", "Max queued jobs for Bronze tier"),
+            "PATREON_TIER_BRONZE_SESSIONS": (
+                "3",
+                "Max terminal sessions for Bronze tier",
+            ),
+            "PATREON_TIER_SILVER_JOBS": ("50", "Max queued jobs for Silver tier"),
+            "PATREON_TIER_SILVER_SESSIONS": (
+                "10",
+                "Max terminal sessions for Silver tier",
+            ),
+            "PATREON_TIER_GOLD_JOBS": ("999", "Max queued jobs for Gold tier"),
+            "PATREON_TIER_GOLD_SESSIONS": ("20", "Max terminal sessions for Gold tier"),
         }
         for key, (value, desc) in default_settings.items():
             if not s.get(AdminSetting, key):
                 s.add(AdminSetting(key=key, value=value, description=desc))
 
         s.commit()
-        creds = 'admin/admin' if not admin_password else 'admin/<your password>'
-        click.echo(f'Database seeded with default devices and admin user ({creds}).')
+        creds = "admin/admin" if not admin_password else "admin/<your password>"
+        click.echo(f"Database seeded with default devices and admin user ({creds}).")
 
-    @app.cli.command('run-worker')
-    @click.option('--device', required=True, help='Device name (centurion or pdp11)')
-    @click.option('--poll-interval', type=int, default=5, help='Seconds between polls')
+    @app.cli.command("run-worker")
+    @click.option("--device", required=True, help="Device name (centurion or pdp11)")
+    @click.option("--poll-interval", type=int, default=5, help="Seconds between polls")
     def run_worker(device, poll_interval):
         """
         Launch a job worker for the specified device.
@@ -237,25 +310,34 @@ def register_cli_commands(app):
         and executes them over RS-232 (or PTY in simulation mode).
         """
         import subprocess
-        worker_script = os.path.join(os.path.dirname(__file__), 'worker.py')
-        click.echo(f'Starting worker for {device} (poll interval: {poll_interval}s)')
+
+        worker_script = os.path.join(os.path.dirname(__file__), "worker.py")
+        click.echo(f"Starting worker for {device} (poll interval: {poll_interval}s)")
         subprocess.run(
-            ['python3', worker_script, '--device', device, '--poll-interval', str(poll_interval)],
+            [
+                "python3",
+                worker_script,
+                "--device",
+                device,
+                "--poll-interval",
+                str(poll_interval),
+            ],
             cwd=os.path.dirname(__file__),
+            check=True,
         )
 
-    @app.cli.command('simulation-worker')
-    @click.option('--device', required=True, help='Device name (centurion or pdp11)')
+    @app.cli.command("simulation-worker")
+    @click.option("--device", required=True, help="Device name (centurion or pdp11)")
     def simulation_worker(device):
         """
         Launch a PTY-based simulation worker for testing without hardware.
         Creates a pseudo-terminal that mimics a vintage machine, updates the
         device port to point to the PTY, and runs the job worker against it.
         """
-        from retrobridge.simulation import create_job_simulation
         from retrobridge.models import Device, DevicePort
+        from retrobridge.simulation import create_job_simulation
 
-        click.echo(f'Creating PTY simulation for {device}...')
+        click.echo(f"Creating PTY simulation for {device}...")
         sim = create_job_simulation(device)
 
         # Update the device's job_queue port dev_path to the PTY slave
@@ -266,7 +348,7 @@ def register_cli_commands(app):
 
         port = (
             app.db_session.query(DevicePort)
-            .filter_by(device_id=device_obj.id, purpose='job_queue')
+            .filter_by(device_id=device_obj.id, purpose="job_queue")
             .first()
         )
         if not port:
@@ -274,27 +356,29 @@ def register_cli_commands(app):
             return
 
         old_path = port.dev_path
-        port.dev_path = sim['slave_name']
+        port.dev_path = sim["slave_name"]
         app.db_session.commit()
-        click.echo(f'Port dev_path updated: {old_path} -> {sim["slave_name"]}')
+        click.echo(f"Port dev_path updated: {old_path} -> {sim['slave_name']}")
 
         try:
-            click.echo(f'Starting worker for {device}...')
+            click.echo(f"Starting worker for {device}...")
             import subprocess
-            worker_script = os.path.join(os.path.dirname(__file__), 'worker.py')
+
+            worker_script = os.path.join(os.path.dirname(__file__), "worker.py")
             subprocess.run(
-                ['python3', worker_script, '--device', device, '--poll-interval', '3'],
+                ["python3", worker_script, "--device", device, "--poll-interval", "3"],
                 cwd=os.path.dirname(__file__),
+                check=True,
             )
         finally:
             port.dev_path = old_path
             app.db_session.commit()
-            sim['stop_event'].set()
-            sim['thread'].join(timeout=2)
-            click.echo('Simulation shut down.')
+            sim["stop_event"].set()
+            sim["thread"].join(timeout=2)
+            click.echo("Simulation shut down.")
 
-    @app.cli.command('simulation-terminal')
-    @click.option('--device', required=True, help='Device name (centurion or pdp11)')
+    @app.cli.command("simulation-terminal")
+    @click.option("--device", required=True, help="Device name (centurion or pdp11)")
     def simulation_terminal(device):
         """
         Launch a PTY-based interactive terminal simulation for testing.
@@ -302,10 +386,10 @@ def register_cli_commands(app):
         updates the interactive port to point to the PTY, and keeps
         running until Ctrl+C.
         """
-        from retrobridge.simulation import create_terminal_simulation
         from retrobridge.models import Device, DevicePort
+        from retrobridge.simulation import create_terminal_simulation
 
-        click.echo(f'Creating PTY terminal simulation for {device}...')
+        click.echo(f"Creating PTY terminal simulation for {device}...")
         sim = create_terminal_simulation(device)
 
         # Update the device's interactive port dev_path to the PTY slave
@@ -316,7 +400,7 @@ def register_cli_commands(app):
 
         port = (
             app.db_session.query(DevicePort)
-            .filter_by(device_id=device_obj.id, purpose='interactive')
+            .filter_by(device_id=device_obj.id, purpose="interactive")
             .first()
         )
         if not port:
@@ -324,21 +408,23 @@ def register_cli_commands(app):
             return
 
         old_path = port.dev_path
-        port.dev_path = sim['slave_name']
+        port.dev_path = sim["slave_name"]
         app.db_session.commit()
-        click.echo(f'Port dev_path updated: {old_path} -> {sim["slave_name"]}')
-        click.echo(f'\nPTY terminal simulation running.')
-        click.echo(f'Connect via the web UI at http://127.0.0.1:5000/terminal/{device_obj.id}')
-        click.echo(f'Press Ctrl+C to stop.\n')
+        click.echo(f"Port dev_path updated: {old_path} -> {sim['slave_name']}")
+        click.echo("\nPTY terminal simulation running.")
+        click.echo(
+            f"Connect via the web UI at http://127.0.0.1:5000/terminal/{device_obj.id}"
+        )
+        click.echo("Press Ctrl+C to stop.\n")
 
         try:
-            while sim['thread'].is_alive():
+            while sim["thread"].is_alive():
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
         finally:
             port.dev_path = old_path
             app.db_session.commit()
-            sim['stop_event'].set()
-            sim['thread'].join(timeout=2)
-            click.echo('Simulation shut down.')
+            sim["stop_event"].set()
+            sim["thread"].join(timeout=2)
+            click.echo("Simulation shut down.")

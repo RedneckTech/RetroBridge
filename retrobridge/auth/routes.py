@@ -1,20 +1,25 @@
 import json
+import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urljoin, urlparse
 
-from flask import render_template, redirect, url_for, flash, request, session
-from flask_login import login_user, logout_user, login_required, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask import flash, redirect, render_template, request, session, url_for
+from flask_login import current_user, login_required, login_user, logout_user
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from retrobridge.auth import auth_bp
-from retrobridge.auth.forms import LoginForm, RegistrationForm, ProfileForm
-from retrobridge.models import Job, LoginAttempt, TerminalSession, User
+from retrobridge.auth.forms import LoginForm, ProfileForm, RegistrationForm
 from retrobridge.integrations.email import (
-    notify_password_changed, notify_email_changed,
-    notify_new_login, notify_account_deleted,
+    notify_account_deleted,
+    notify_email_changed,
+    notify_new_login,
+    notify_password_changed,
 )
+from retrobridge.models import Job, LoginAttempt, TerminalSession, User
 from retrobridge.security import _client_ip
+
+logger = logging.getLogger(__name__)
 
 MAX_FAILED_ATTEMPTS = 5
 THROTTLE_WINDOW_MINUTES = 15
@@ -32,7 +37,7 @@ def _record_attempt(db_session, ip_address, username, success):
 
 def _clear_failed_attempts(db_session, username, ip_address):
     """Reset the failure window for a username after a successful login."""
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=THROTTLE_WINDOW_MINUTES)
+    cutoff = datetime.now(UTC) - timedelta(minutes=THROTTLE_WINDOW_MINUTES)
     db_session.query(LoginAttempt).filter(
         LoginAttempt.username == username,
         LoginAttempt.ip_address == ip_address,
@@ -50,7 +55,7 @@ def _is_throttled(db_session, ip_address, username):
     throttling still catches distributed brute-force attempts against a
     single account.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=THROTTLE_WINDOW_MINUTES)
+    cutoff = datetime.now(UTC) - timedelta(minutes=THROTTLE_WINDOW_MINUTES)
 
     ip_pair_count = (
         db_session.query(LoginAttempt)
@@ -82,52 +87,53 @@ def _is_safe_redirect_url(target):
         return False
     # Browsers normalize a leading backslash in Location to '//', turning
     # '\evil.com' into an external redirect — reject outright.
-    if '\\' in target:
+    if "\\" in target:
         return False
-    if target.startswith('/') and not target.startswith('//'):
+    if target.startswith("/") and not target.startswith("//"):
         return True
     ref = urlparse(request.host_url)
     test = urlparse(urljoin(request.host_url, target))
-    return test.scheme in ('http', 'https') and test.netloc == ref.netloc
+    return test.scheme in ("http", "https") and test.netloc == ref.netloc
 
 
-@auth_bp.route('/login', methods=['GET', 'POST'])
+@auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for('jobs.dashboard'))
+        return redirect(url_for("jobs.dashboard"))
 
     from flask import current_app
-    ip_address = _client_ip(request) or '127.0.0.1'
+
+    ip_address = _client_ip(request) or "127.0.0.1"
 
     form = LoginForm()
     if form.validate_on_submit():
         username = form.username.data
         if _is_throttled(current_app.db_session, ip_address, username):
             flash(
-                f'Too many failed login attempts. '
-                f'Please try again in {THROTTLE_WINDOW_MINUTES} minutes.',
-                'danger',
+                f"Too many failed login attempts. "
+                f"Please try again in {THROTTLE_WINDOW_MINUTES} minutes.",
+                "danger",
             )
-            return render_template('auth/login.html', form=form)
+            return render_template("auth/login.html", form=form)
 
-        user = current_app.db_session.query(User).filter_by(
-            username=username
-        ).first()
+        user = current_app.db_session.query(User).filter_by(username=username).first()
 
         if user and check_password_hash(user.password_hash, form.password.data):
             login_user(user, remember=form.remember_me.data)
-            user.last_login = datetime.now(timezone.utc)
+            user.last_login = datetime.now(UTC)
 
             from retrobridge.integrations.patreon import is_enabled, sync_user_tier
+
             if is_enabled():
                 try:
                     sync_user_tier(user, current_app.db_session)
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Failed to sync Patreon tier for %s", username, exc_info=True
+                    )
 
             _clear_failed_attempts(current_app.db_session, username, ip_address)
-            _record_attempt(current_app.db_session, ip_address,
-                            username, success=True)
+            _record_attempt(current_app.db_session, ip_address, username, success=True)
 
             if user.email_notify_security:
                 prior_attempts = (
@@ -142,46 +148,50 @@ def login():
                 if prior_attempts <= 1:
                     notify_new_login(user, ip_address)
 
-            flash('Logged in successfully.', 'success')
-            next_page = request.args.get('next')
+            flash("Logged in successfully.", "success")
+            next_page = request.args.get("next")
             if next_page and _is_safe_redirect_url(next_page):
                 return redirect(next_page)
-            return redirect(url_for('jobs.dashboard'))
+            return redirect(url_for("jobs.dashboard"))
         else:
-            _record_attempt(current_app.db_session, ip_address,
-                            username, success=False)
-            flash('Invalid username or password.', 'danger')
+            _record_attempt(current_app.db_session, ip_address, username, success=False)
+            flash("Invalid username or password.", "danger")
 
-    return render_template('auth/login.html', form=form)
+    return render_template("auth/login.html", form=form)
 
 
-@auth_bp.route('/register', methods=['GET', 'POST'])
+@auth_bp.route("/register", methods=["GET", "POST"])
 def register():
     if current_user.is_authenticated:
-        return redirect(url_for('jobs.dashboard'))
+        return redirect(url_for("jobs.dashboard"))
 
     from flask import current_app
+
     from retrobridge.admin.settings_utils import get_bool
 
-    if not get_bool('REGISTRATION_OPEN'):
-        flash('Registration is currently closed.', 'warning')
-        return render_template('auth/register.html', form=RegistrationForm())
+    if not get_bool("REGISTRATION_OPEN"):
+        flash("Registration is currently closed.", "warning")
+        return render_template("auth/register.html", form=RegistrationForm())
 
     form = RegistrationForm()
     if form.validate_on_submit():
         # Check for duplicate username
-        existing_user = current_app.db_session.query(User).filter_by(
-            username=form.username.data).first()
+        existing_user = (
+            current_app.db_session.query(User)
+            .filter_by(username=form.username.data)
+            .first()
+        )
         if existing_user:
-            form.username.errors.append('This username is already taken.')
-            return render_template('auth/register.html', form=form)
+            form.username.errors.append("This username is already taken.")
+            return render_template("auth/register.html", form=form)
 
         # Check for duplicate email
-        existing_email = current_app.db_session.query(User).filter_by(
-            email=form.email.data).first()
+        existing_email = (
+            current_app.db_session.query(User).filter_by(email=form.email.data).first()
+        )
         if existing_email:
-            form.email.errors.append('This email is already registered.')
-            return render_template('auth/register.html', form=form)
+            form.email.errors.append("This email is already registered.")
+            return render_template("auth/register.html", form=form)
 
         user = User(
             username=form.username.data,
@@ -192,37 +202,38 @@ def register():
         current_app.db_session.add(user)
         current_app.db_session.commit()
         login_user(user)
-        flash('Account created successfully. Welcome!', 'success')
-        return redirect(url_for('jobs.dashboard'))
+        flash("Account created successfully. Welcome!", "success")
+        return redirect(url_for("jobs.dashboard"))
 
-    return render_template('auth/register.html', form=form)
+    return render_template("auth/register.html", form=form)
 
 
-@auth_bp.route('/logout')
+@auth_bp.route("/logout")
 @login_required
 def logout():
     logout_user()
-    flash('You have been logged out.', 'info')
-    return redirect(url_for('auth.login'))
+    flash("You have been logged out.", "info")
+    return redirect(url_for("auth.login"))
 
 
-@auth_bp.route('/profile', methods=['GET', 'POST'])
+@auth_bp.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
     from flask import current_app
+
     from retrobridge.integrations.patreon import is_enabled as is_patreon_enabled
 
     form = ProfileForm(obj=current_user)
 
-    if request.method == 'GET':
+    if request.method == "GET":
         prefs = {}
         if current_user.preferences:
             try:
                 prefs = json.loads(current_user.preferences)
             except json.JSONDecodeError:
                 pass
-        form.terminal_font_size.data = prefs.get('terminal_font_size', 14)
-        form.terminal_color_scheme.data = prefs.get('terminal_color_scheme', 'dark')
+        form.terminal_font_size.data = prefs.get("terminal_font_size", 14)
+        form.terminal_color_scheme.data = prefs.get("terminal_color_scheme", "dark")
 
     if form.validate_on_submit():
         old_email = current_user.email
@@ -231,159 +242,201 @@ def profile():
         current_user.bio = form.bio.data
         current_user.email_notify_jobs = form.email_notify_jobs.data
         current_user.email_notify_security = form.email_notify_security.data
-        current_user.preferences = json.dumps({
-            'terminal_font_size': form.terminal_font_size.data,
-            'terminal_color_scheme': form.terminal_color_scheme.data,
-        })
+        current_user.preferences = json.dumps(
+            {
+                "terminal_font_size": form.terminal_font_size.data,
+                "terminal_color_scheme": form.terminal_color_scheme.data,
+            }
+        )
         if form.new_password.data:
-            if not check_password_hash(current_user.password_hash, form.current_password.data):
-                flash('Current password is incorrect.', 'danger')
-                return redirect(url_for('auth.profile'))
+            if not check_password_hash(
+                current_user.password_hash, form.current_password.data
+            ):
+                flash("Current password is incorrect.", "danger")
+                return redirect(url_for("auth.profile"))
             current_user.password_hash = generate_password_hash(form.new_password.data)
             if current_user.email_notify_security:
                 notify_password_changed(current_user)
         if old_email != current_user.email and current_user.email_notify_security:
             notify_email_changed(current_user, old_email, current_user.email)
         current_app.db_session.commit()
-        flash('Profile updated.', 'success')
-        return redirect(url_for('auth.profile'))
+        flash("Profile updated.", "success")
+        return redirect(url_for("auth.profile"))
 
     # Stats
-    total_jobs = current_app.db_session.query(Job).filter_by(
-        user_id=current_user.id).count()
-    queued_count = current_app.db_session.query(Job).filter_by(
-        user_id=current_user.id, status='queued').count()
-    running_count = current_app.db_session.query(Job).filter_by(
-        user_id=current_user.id, status='running').count()
-    completed_count = current_app.db_session.query(Job).filter_by(
-        user_id=current_user.id, status='completed').count()
-    total_sessions = current_app.db_session.query(TerminalSession).filter_by(
-        user_id=current_user.id).count()
-    active_sessions = current_app.db_session.query(TerminalSession).filter_by(
-        user_id=current_user.id, status='active').count()
+    total_jobs = (
+        current_app.db_session.query(Job).filter_by(user_id=current_user.id).count()
+    )
+    queued_count = (
+        current_app.db_session.query(Job)
+        .filter_by(user_id=current_user.id, status="queued")
+        .count()
+    )
+    running_count = (
+        current_app.db_session.query(Job)
+        .filter_by(user_id=current_user.id, status="running")
+        .count()
+    )
+    completed_count = (
+        current_app.db_session.query(Job)
+        .filter_by(user_id=current_user.id, status="completed")
+        .count()
+    )
+    total_sessions = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(user_id=current_user.id)
+        .count()
+    )
+    active_sessions = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(user_id=current_user.id, status="active")
+        .count()
+    )
 
-    recent_jobs = current_app.db_session.query(Job).filter_by(
-        user_id=current_user.id).order_by(Job.created_at.desc()).limit(5).all()
-    recent_sessions = current_app.db_session.query(TerminalSession).filter_by(
-        user_id=current_user.id).order_by(
-        TerminalSession.connected_at.desc()).limit(5).all()
+    recent_jobs = (
+        current_app.db_session.query(Job)
+        .filter_by(user_id=current_user.id)
+        .order_by(Job.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    recent_sessions = (
+        current_app.db_session.query(TerminalSession)
+        .filter_by(user_id=current_user.id)
+        .order_by(TerminalSession.connected_at.desc())
+        .limit(5)
+        .all()
+    )
 
     stats = {
-        'total_jobs': total_jobs,
-        'queued_count': queued_count,
-        'running_count': running_count,
-        'completed_count': completed_count,
-        'total_sessions': total_sessions,
-        'active_sessions': active_sessions,
-        'max_queued': current_user.max_queued_jobs,
-        'max_sessions': current_user.max_terminal_sessions,
+        "total_jobs": total_jobs,
+        "queued_count": queued_count,
+        "running_count": running_count,
+        "completed_count": completed_count,
+        "total_sessions": total_sessions,
+        "active_sessions": active_sessions,
+        "max_queued": current_user.max_queued_jobs,
+        "max_sessions": current_user.max_terminal_sessions,
     }
 
-    return render_template('auth/profile.html', form=form, stats=stats,
-                           recent_jobs=recent_jobs,
-                           recent_sessions=recent_sessions,
-                           patreon_enabled=is_patreon_enabled())
+    return render_template(
+        "auth/profile.html",
+        form=form,
+        stats=stats,
+        recent_jobs=recent_jobs,
+        recent_sessions=recent_sessions,
+        patreon_enabled=is_patreon_enabled(),
+    )
 
 
-@auth_bp.route('/delete-account', methods=['POST'])
+@auth_bp.route("/delete-account", methods=["POST"])
 @login_required
 def delete_account():
     from flask import current_app
+
     from retrobridge.api.routes import _delete_user_directories
+
     user = current_app.db_session.get(User, current_user.id)
     if user:
         if user.email_notify_security:
             notify_account_deleted(user)
         # Collect file locations before the rows are gone; delete files
         # only after the commit succeeds.
-        jobs = (current_app.db_session.query(Job)
-                .filter_by(user_id=user.id).all())
-        sessions = (current_app.db_session.query(TerminalSession)
-                    .filter_by(user_id=user.id).all())
+        jobs = current_app.db_session.query(Job).filter_by(user_id=user.id).all()
+        sessions = (
+            current_app.db_session.query(TerminalSession)
+            .filter_by(user_id=user.id)
+            .all()
+        )
         logout_user()
         current_app.db_session.delete(user)
         current_app.db_session.commit()
         _delete_user_directories(current_app, jobs, sessions)
-        flash('Your account has been deleted.', 'info')
-    return redirect(url_for('auth.login'))
+        flash("Your account has been deleted.", "info")
+    return redirect(url_for("auth.login"))
 
 
-@auth_bp.route('/profile/patreon/link')
+@auth_bp.route("/profile/patreon/link")
 @login_required
 def patreon_link():
-    from retrobridge.integrations.patreon import is_enabled, get_authorize_url
+    from retrobridge.integrations.patreon import get_authorize_url, is_enabled
+
     if not is_enabled():
-        flash('Patreon integration is not configured.', 'warning')
-        return redirect(url_for('auth.profile'))
-    redirect_uri = url_for('auth.patreon_callback', _external=True)
+        flash("Patreon integration is not configured.", "warning")
+        return redirect(url_for("auth.profile"))
+    redirect_uri = url_for("auth.patreon_callback", _external=True)
     state = secrets.token_urlsafe(32)
-    session['patreon_oauth_state'] = state
+    session["patreon_oauth_state"] = state
     return redirect(get_authorize_url(redirect_uri, state=state))
 
 
-@auth_bp.route('/profile/patreon/callback')
+@auth_bp.route("/profile/patreon/callback")
 @login_required
 def patreon_callback():
     from flask import current_app
+
     from retrobridge.integrations.patreon import (
-        exchange_code, fetch_patreon_identity, fetch_membership_tier,
+        exchange_code,
+        fetch_membership_tier,
+        fetch_patreon_identity,
     )
 
-    code = request.args.get('code')
-    state = request.args.get('state')
-    error = request.args.get('error')
+    code = request.args.get("code")
+    state = request.args.get("state")
+    error = request.args.get("error")
 
     if error:
-        flash(f'Patreon authorization failed: {error}', 'danger')
-        return redirect(url_for('auth.profile'))
+        flash(f"Patreon authorization failed: {error}", "danger")
+        return redirect(url_for("auth.profile"))
 
-    expected_state = session.pop('patreon_oauth_state', None)
+    expected_state = session.pop("patreon_oauth_state", None)
     if not code or not state or not expected_state:
-        flash('Invalid Patreon callback parameters.', 'danger')
-        return redirect(url_for('auth.profile'))
+        flash("Invalid Patreon callback parameters.", "danger")
+        return redirect(url_for("auth.profile"))
 
     if not secrets.compare_digest(state, expected_state):
-        flash('Invalid OAuth state parameter.', 'danger')
-        return redirect(url_for('auth.profile'))
+        flash("Invalid OAuth state parameter.", "danger")
+        return redirect(url_for("auth.profile"))
 
-    redirect_uri = url_for('auth.patreon_callback', _external=True)
+    redirect_uri = url_for("auth.patreon_callback", _external=True)
     tokens = exchange_code(code, redirect_uri)
     if not tokens:
-        flash('Failed to exchange Patreon authorization code.', 'danger')
-        return redirect(url_for('auth.profile'))
+        flash("Failed to exchange Patreon authorization code.", "danger")
+        return redirect(url_for("auth.profile"))
 
-    identity = fetch_patreon_identity(tokens['access_token'])
+    identity = fetch_patreon_identity(tokens["access_token"])
     if not identity:
-        flash('Failed to fetch Patreon profile.', 'danger')
-        return redirect(url_for('auth.profile'))
+        flash("Failed to fetch Patreon profile.", "danger")
+        return redirect(url_for("auth.profile"))
 
-    tier = fetch_membership_tier(tokens['access_token'])
+    tier = fetch_membership_tier(tokens["access_token"])
 
-    user.patreon_id = identity['id']
-    user.patreon_tier = tier
-    user.patreon_access_token = tokens['access_token']
-    user.patreon_refresh_token = tokens['refresh_token']
-    user.patreon_expires_at = datetime.now(timezone.utc) + timedelta(
-        seconds=tokens['expires_in'],
+    current_user.patreon_id = identity["id"]
+    current_user.patreon_tier = tier
+    current_user.patreon_access_token = tokens["access_token"]
+    current_user.patreon_refresh_token = tokens["refresh_token"]
+    current_user.patreon_expires_at = datetime.now(UTC) + timedelta(
+        seconds=tokens["expires_in"],
     )
     current_app.db_session.commit()
 
     if tier:
-        flash(f'Patreon account linked — tier: {tier}', 'success')
+        flash(f"Patreon account linked — tier: {tier}", "success")
     else:
-        flash('Patreon account linked (no active membership found).', 'info')
-    return redirect(url_for('auth.profile'))
+        flash("Patreon account linked (no active membership found).", "info")
+    return redirect(url_for("auth.profile"))
 
 
-@auth_bp.route('/profile/patreon/unlink', methods=['POST'])
+@auth_bp.route("/profile/patreon/unlink", methods=["POST"])
 @login_required
 def patreon_unlink():
     from flask import current_app
+
     from retrobridge.integrations.patreon import unlink_user
 
     user = current_app.db_session.get(User, current_user.id)
     if user:
         unlink_user(user)
         current_app.db_session.commit()
-        flash('Patreon account unlinked.', 'info')
-    return redirect(url_for('auth.profile'))
+        flash("Patreon account unlinked.", "info")
+    return redirect(url_for("auth.profile"))

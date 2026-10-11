@@ -1,3 +1,4 @@
+import logging
 import time
 from urllib.parse import urlparse
 
@@ -8,9 +9,11 @@ from flask_socketio import emit
 from retrobridge.models import Device, DevicePort, TerminalSession
 from retrobridge.terminal import utils
 
+logger = logging.getLogger(__name__)
+
 
 def _get_sid():
-    return getattr(request, 'sid', None)
+    return getattr(request, "sid", None)
 
 
 def _origin_allowed():
@@ -18,114 +21,122 @@ def _origin_allowed():
     hijacking).  Browser clients send an Origin header: it must match the
     request host or be explicitly allowlisted.  Non-browser clients send
     no Origin and are allowed."""
-    environ = getattr(request, 'environ', None) or {}
-    origin = environ.get('HTTP_ORIGIN')
+    environ = getattr(request, "environ", None) or {}
+    origin = environ.get("HTTP_ORIGIN")
     if not origin:
         return True
 
-    host = environ.get('HTTP_HOST') or environ.get('SERVER_NAME') or ''
+    host = environ.get("HTTP_HOST") or environ.get("SERVER_NAME") or ""
     if urlparse(origin).netloc == host:
         return True
 
-    allowed = current_app.config.get('SOCKETIO_ALLOWED_ORIGINS') or []
+    allowed = current_app.config.get("SOCKETIO_ALLOWED_ORIGINS") or []
     return origin in allowed
 
 
 def register_socketio_events(socketio):
-    @socketio.on('connect', namespace='/terminal')
+    @socketio.on("connect", namespace="/terminal")
     def handle_connect():
         if not current_user.is_authenticated:
             return False
         if not _origin_allowed():
             return False
 
-    @socketio.on('disconnect', namespace='/terminal')
+    @socketio.on("disconnect", namespace="/terminal")
     def handle_disconnect(reason=None):
         sid = _get_sid()
         if sid:
             utils.suspend_bridge(socketio, sid)
 
-    @socketio.on('client_disconnect', namespace='/terminal')
+    @socketio.on("client_disconnect", namespace="/terminal")
     def handle_client_disconnect():
         sid = _get_sid()
         if sid:
-            utils.stop_bridge(socketio, sid, reason='user_disconnect')
+            utils.stop_bridge(socketio, sid, reason="user_disconnect")
 
-    @socketio.on('request_session', namespace='/terminal')
+    @socketio.on("request_session", namespace="/terminal")
     def handle_request_session(data):
         sid = _get_sid()
 
         if not current_user.is_authenticated:
-            emit('session_denied', {'reason': 'Not authenticated'})
+            emit("session_denied", {"reason": "Not authenticated"})
             return
 
         # Mirror the HTTP maintenance gate: sessions must not start while
         # the site is in maintenance mode (admins may still connect).
         from retrobridge.admin.settings_utils import get_bool
-        if get_bool('MAINTENANCE_MODE') and not current_user.is_admin:
-            emit('session_denied', {'reason': 'Maintenance mode is active'})
+
+        if get_bool("MAINTENANCE_MODE") and not current_user.is_admin:
+            emit("session_denied", {"reason": "Maintenance mode is active"})
             return
 
-        device_id = data.get('device_id')
+        device_id = data.get("device_id")
         device = current_app.db_session.get(Device, device_id)
         if not device or not device.is_enabled:
-            emit('session_denied', {'reason': 'Device not available'})
+            emit("session_denied", {"reason": "Device not available"})
             return
 
         # Check if this sid already has an active bridge
-        if utils._active_bridges.get(sid, {}).get('running'):
-            emit('session_denied', {'reason': 'Session already active on this connection'})
+        if utils._active_bridges.get(sid, {}).get("running"):
+            emit(
+                "session_denied",
+                {"reason": "Session already active on this connection"},
+            )
             return
 
         # Check for a suspended session on this device for this user
         existing_session = (
             current_app.db_session.query(TerminalSession)
-            .filter_by(user_id=current_user.id, device_id=device_id, status='active')
+            .filter_by(user_id=current_user.id, device_id=device_id, status="active")
             .first()
         )
         if existing_session:
             bridge = utils.resume_bridge(socketio, sid, existing_session.id)
             if bridge:
                 port = current_app.db_session.get(DevicePort, existing_session.port_id)
-                emit('session_granted', {
-                    'session_id': existing_session.id,
-                    'device_name': device.display_name or device.name,
-                    'port_label': port.port_label if port else '',
-                    'baud': port.baud if port else 0,
-                    'cols': 80,
-                    'rows': 24,
-                })
+                emit(
+                    "session_granted",
+                    {
+                        "session_id": existing_session.id,
+                        "device_name": device.display_name or device.name,
+                        "port_label": port.port_label if port else "",
+                        "baud": port.baud if port else 0,
+                        "cols": 80,
+                        "rows": 24,
+                    },
+                )
                 return
 
             # Resume failed.  Deny only if the session is still active (e.g.
             # bridged on another worker); otherwise the resume ended it
             # (grace period expired) and a fresh session may be created below.
             current_app.db_session.refresh(existing_session)
-            if existing_session.status == 'active':
-                emit('session_denied', {'reason': 'Session is already active'})
+            if existing_session.status == "active":
+                emit("session_denied", {"reason": "Session is already active"})
                 return
 
         # Check user session quota
         active_count = (
             current_app.db_session.query(TerminalSession)
-            .filter_by(user_id=current_user.id, status='active')
+            .filter_by(user_id=current_user.id, status="active")
             .count()
         )
         max_sessions = current_user.max_terminal_sessions
         if current_user.patreon_tier:
             from retrobridge.integrations.patreon import get_tier_limits
+
             _, tier_sessions = get_tier_limits(current_user.patreon_tier)
             if tier_sessions and tier_sessions > max_sessions:
                 max_sessions = tier_sessions
 
         if active_count >= max_sessions:
-            emit('session_denied', {'reason': 'Maximum terminal sessions reached'})
+            emit("session_denied", {"reason": "Maximum terminal sessions reached"})
             return
 
         # Find available interactive port using DB-backed leases
         interactive_ports = (
             current_app.db_session.query(DevicePort)
-            .filter_by(device_id=device_id, purpose='interactive', is_enabled=True)
+            .filter_by(device_id=device_id, purpose="interactive", is_enabled=True)
             .all()
         )
 
@@ -146,56 +157,67 @@ def register_socketio_events(socketio):
             session = None
 
         if not available_port:
-            emit('session_denied', {'reason': 'All interactive ports are currently in use'})
+            emit(
+                "session_denied",
+                {"reason": "All interactive ports are currently in use"},
+            )
             return
 
         # Start the serial bridge
         success = utils.start_bridge(socketio, sid, session, available_port)
         if not success:
-            utils.end_session(current_app.db_session, session.id, reason='error')
-            emit('session_denied', {
-                'reason': f'Could not open serial port: {available_port.dev_path}'
-            })
+            utils.end_session(current_app.db_session, session.id, reason="error")
+            emit(
+                "session_denied",
+                {"reason": f"Could not open serial port: {available_port.dev_path}"},
+            )
             return
 
-        emit('session_granted', {
-            'session_id': session.id,
-            'device_name': device.display_name or device.name,
-            'port_label': available_port.port_label,
-            'baud': available_port.baud,
-            'cols': 80,
-            'rows': 24,
-        })
+        emit(
+            "session_granted",
+            {
+                "session_id": session.id,
+                "device_name": device.display_name or device.name,
+                "port_label": available_port.port_label,
+                "baud": available_port.baud,
+                "cols": 80,
+                "rows": 24,
+            },
+        )
 
-    @socketio.on('terminal_input', namespace='/terminal')
+    @socketio.on("terminal_input", namespace="/terminal")
     def handle_terminal_input(data):
         sid = _get_sid()
         if sid:
-            utils.write_to_serial(sid, data.get('data', ''))
+            utils.write_to_serial(sid, data.get("data", ""))
 
-    @socketio.on('terminal_resize', namespace='/terminal')
+    @socketio.on("terminal_resize", namespace="/terminal")
     def handle_terminal_resize(data):
         pass
 
-    @socketio.on('heartbeat', namespace='/terminal')
+    @socketio.on("heartbeat", namespace="/terminal")
     def handle_heartbeat(data=None):
         sid = _get_sid()
         if sid:
             bridge = utils._active_bridges.get(sid)
-            if bridge and bridge['running']:
-                bridge['last_activity'] = time.time()
+            if bridge and bridge["running"]:
+                bridge["last_activity"] = time.time()
                 try:
                     utils.heartbeat_port_lease(
-                        current_app.db_session, bridge['session_id'],
+                        current_app.db_session,
+                        bridge["session_id"],
                     )
                 except Exception:
-                    pass
-                emit('heartbeat_ack', {
-                    'bytes_sent': bridge.get('bytes_sent', 0),
-                    'bytes_received': bridge.get('bytes_received', 0),
-                })
+                    logger.debug("Heartbeat lease update failed", exc_info=True)
+                emit(
+                    "heartbeat_ack",
+                    {
+                        "bytes_sent": bridge.get("bytes_sent", 0),
+                        "bytes_received": bridge.get("bytes_received", 0),
+                    },
+                )
                 return
-        emit('heartbeat_ack')
+        emit("heartbeat_ack")
 
     # Start the timeout monitor
     utils.start_timeout_monitor(socketio)

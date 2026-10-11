@@ -1,10 +1,10 @@
 """E2E tests — auth hardening: password policy, login throttling, session protection."""
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import check_password_hash
 
 from retrobridge.models import LoginAttempt, User
 
@@ -12,11 +12,13 @@ from retrobridge.models import LoginAttempt, User
 @pytest.fixture
 def app():
     from retrobridge import create_app
-    app = create_app('config.TestConfig')
-    app.config['UPLOAD_DIR'] = tempfile.mkdtemp()
-    app.config['OUTPUT_DIR'] = tempfile.mkdtemp()
+
+    app = create_app("config.TestConfig")
+    app.config["UPLOAD_DIR"] = tempfile.mkdtemp()
+    app.config["OUTPUT_DIR"] = tempfile.mkdtemp()
 
     from retrobridge.models import Base
+
     Base.metadata.create_all(bind=app.db_engine)
 
     yield app
@@ -29,271 +31,352 @@ def client(app):
     return app.test_client()
 
 
-def _register(client, username='alice', password='Alice123'):
-    resp = client.post('/auth/register', data={
-        'username': username,
-        'email': f'{username}@example.com',
-        'full_name': 'Test User',
-        'password': password,
-        'confirm_password': password,
-    }, follow_redirects=True)
+def _register(client, username="alice", password="Alice123"):
+    resp = client.post(
+        "/auth/register",
+        data={
+            "username": username,
+            "email": f"{username}@example.com",
+            "full_name": "Test User",
+            "password": password,
+            "confirm_password": password,
+        },
+        follow_redirects=True,
+    )
     # Registration auto-logs in; logout so subsequent tests start clean
-    client.get('/auth/logout', follow_redirects=True)
+    client.get("/auth/logout", follow_redirects=True)
     return resp
 
 
-def _login(client, username='alice', password='Alice123'):
-    return client.post('/auth/login', data={
-        'username': username,
-        'password': password,
-    }, follow_redirects=True)
+def _login(client, username="alice", password="Alice123"):
+    return client.post(
+        "/auth/login",
+        data={
+            "username": username,
+            "password": password,
+        },
+        follow_redirects=True,
+    )
 
 
 class TestPasswordPolicy:
     """SDD 11.2: Password must be 8+ chars, 1 uppercase, 1 digit."""
 
     def test_rejects_password_without_uppercase(self, client):
-        resp = client.post('/auth/register', data={
-            'username': 'bob',
-            'email': 'bob@example.com',
-            'full_name': 'Bob',
-            'password': 'lowercase1',
-            'confirm_password': 'lowercase1',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/register",
+            data={
+                "username": "bob",
+                "email": "bob@example.com",
+                "full_name": "Bob",
+                "password": "lowercase1",
+                "confirm_password": "lowercase1",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'uppercase' in resp.data.lower()
+        assert b"uppercase" in resp.data.lower()
 
     def test_rejects_password_without_digit(self, client):
-        resp = client.post('/auth/register', data={
-            'username': 'bob',
-            'email': 'bob@example.com',
-            'full_name': 'Bob',
-            'password': 'NoDigitsHere',
-            'confirm_password': 'NoDigitsHere',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/register",
+            data={
+                "username": "bob",
+                "email": "bob@example.com",
+                "full_name": "Bob",
+                "password": "NoDigitsHere",
+                "confirm_password": "NoDigitsHere",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'digit' in resp.data.lower()
+        assert b"digit" in resp.data.lower()
 
     def test_rejects_short_password(self, client):
-        resp = client.post('/auth/register', data={
-            'username': 'bob',
-            'email': 'bob@example.com',
-            'full_name': 'Bob',
-            'password': 'Ab1',
-            'confirm_password': 'Ab1',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/register",
+            data={
+                "username": "bob",
+                "email": "bob@example.com",
+                "full_name": "Bob",
+                "password": "Ab1",
+                "confirm_password": "Ab1",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'least 8' in resp.data.lower()
+        assert b"least 8" in resp.data.lower()
 
     def test_accepts_valid_password(self, client, app):
-        resp = _register(client, password='ValidPass1')
+        resp = _register(client, password="ValidPass1")
         assert resp.status_code == 200
-        assert b'Account created' in resp.data
-        user = app.db_session.query(User).filter_by(username='alice').first()
+        assert b"Account created" in resp.data
+        user = app.db_session.query(User).filter_by(username="alice").first()
         assert user is not None
 
     def test_profile_password_change_enforces_policy(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.post('/auth/profile', data={
-            'email': 'alice@example.com',
-            'full_name': 'Alice',
-            'bio': '',
-            'terminal_font_size': 14,
-            'terminal_color_scheme': 'dark',
-            'current_password': 'Alice123',
-            'new_password': 'weak',
-            'confirm_password': 'weak',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/profile",
+            data={
+                "email": "alice@example.com",
+                "full_name": "Alice",
+                "bio": "",
+                "terminal_font_size": 14,
+                "terminal_color_scheme": "dark",
+                "current_password": "Alice123",
+                "new_password": "weak",
+                "confirm_password": "weak",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert (b'uppercase' in resp.data.lower()
-                or b'least 8' in resp.data.lower()
-                or b'digit' in resp.data.lower())
+        assert (
+            b"uppercase" in resp.data.lower()
+            or b"least 8" in resp.data.lower()
+            or b"digit" in resp.data.lower()
+        )
 
     def test_profile_password_change_requires_current_password(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.post('/auth/profile', data={
-            'email': 'alice@example.com',
-            'full_name': 'Alice',
-            'bio': '',
-            'terminal_font_size': 14,
-            'terminal_color_scheme': 'dark',
-            'current_password': '',
-            'new_password': 'NewPass1!',
-            'confirm_password': 'NewPass1!',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/profile",
+            data={
+                "email": "alice@example.com",
+                "full_name": "Alice",
+                "bio": "",
+                "terminal_font_size": 14,
+                "terminal_color_scheme": "dark",
+                "current_password": "",
+                "new_password": "NewPass1!",
+                "confirm_password": "NewPass1!",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'current password' in resp.data.lower()
+        assert b"current password" in resp.data.lower()
 
     def test_profile_password_change_rejects_wrong_current_password(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.post('/auth/profile', data={
-            'email': 'alice@example.com',
-            'full_name': 'Alice',
-            'bio': '',
-            'terminal_font_size': 14,
-            'terminal_color_scheme': 'dark',
-            'current_password': 'wrong-password',
-            'new_password': 'NewPass1!',
-            'confirm_password': 'NewPass1!',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/profile",
+            data={
+                "email": "alice@example.com",
+                "full_name": "Alice",
+                "bio": "",
+                "terminal_font_size": 14,
+                "terminal_color_scheme": "dark",
+                "current_password": "wrong-password",
+                "new_password": "NewPass1!",
+                "confirm_password": "NewPass1!",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'incorrect' in resp.data.lower()
+        assert b"incorrect" in resp.data.lower()
 
     def test_profile_password_change_accepts_valid(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.post('/auth/profile', data={
-            'email': 'alice@example.com',
-            'full_name': 'Alice',
-            'bio': '',
-            'terminal_font_size': 14,
-            'terminal_color_scheme': 'dark',
-            'current_password': 'Alice123',
-            'new_password': 'NewPass1!',
-            'confirm_password': 'NewPass1!',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/profile",
+            data={
+                "email": "alice@example.com",
+                "full_name": "Alice",
+                "bio": "",
+                "terminal_font_size": 14,
+                "terminal_color_scheme": "dark",
+                "current_password": "Alice123",
+                "new_password": "NewPass1!",
+                "confirm_password": "NewPass1!",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'Profile updated' in resp.data
+        assert b"Profile updated" in resp.data
 
-        user = app.db_session.query(User).filter_by(username='alice').first()
-        assert check_password_hash(user.password_hash, 'NewPass1!')
+        user = app.db_session.query(User).filter_by(username="alice").first()
+        assert check_password_hash(user.password_hash, "NewPass1!")
 
 
 class TestLoginThrottling:
     """SDD 11.2: 5 failed attempts in 15 minutes blocks further attempts."""
 
     def test_throttle_after_five_failed_attempts(self, client, app):
-        _register(client, username='locked', password='Alice123')
+        _register(client, username="locked", password="Alice123")
 
         # 5 failed attempts (user is logged out after _register)
         for _ in range(5):
-            client.post('/auth/login', data={
-                'username': 'locked',
-                'password': 'WrongPass1',
-            }, follow_redirects=True)
+            client.post(
+                "/auth/login",
+                data={
+                    "username": "locked",
+                    "password": "WrongPass1",
+                },
+                follow_redirects=True,
+            )
 
         # 6th attempt should be throttled
-        resp = client.post('/auth/login', data={
-            'username': 'locked',
-            'password': 'Alice123',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/login",
+            data={
+                "username": "locked",
+                "password": "Alice123",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'Too many failed' in resp.data
+        assert b"Too many failed" in resp.data
 
     def test_successful_login_resets_throttle_count(self, client, app):
-        _register(client, username='resetter', password='ResetPass1')
+        _register(client, username="resetter", password="ResetPass1")
 
         # 3 failed then a success
         for _ in range(3):
-            client.post('/auth/login', data={
-                'username': 'resetter',
-                'password': 'WrongPass1',
-            }, follow_redirects=True)
+            client.post(
+                "/auth/login",
+                data={
+                    "username": "resetter",
+                    "password": "WrongPass1",
+                },
+                follow_redirects=True,
+            )
 
-        resp = client.post('/auth/login', data={
-            'username': 'resetter',
-            'password': 'ResetPass1',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/login",
+            data={
+                "username": "resetter",
+                "password": "ResetPass1",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'Dashboard' in resp.data
+        assert b"Dashboard" in resp.data
 
     def test_different_usernames_behind_same_ip_are_not_blocked(self, client, app):
         """NAT scenario: failures for user A should not block user B."""
-        _register(client, username='nat_user_a', password='Alice123')
-        _register(client, username='nat_user_b', password='Bob12345')
+        _register(client, username="nat_user_a", password="Alice123")
+        _register(client, username="nat_user_b", password="Bob12345")
 
         # 5 failed attempts for user_a from the same IP
         for _ in range(5):
-            client.post('/auth/login', data={
-                'username': 'nat_user_a',
-                'password': 'WrongPass1',
-            }, follow_redirects=True)
+            client.post(
+                "/auth/login",
+                data={
+                    "username": "nat_user_a",
+                    "password": "WrongPass1",
+                },
+                follow_redirects=True,
+            )
 
         # user_a is now throttled
-        resp = client.post('/auth/login', data={
-            'username': 'nat_user_a',
-            'password': 'Alice123',
-        }, follow_redirects=True)
-        assert b'Too many failed' in resp.data
+        resp = client.post(
+            "/auth/login",
+            data={
+                "username": "nat_user_a",
+                "password": "Alice123",
+            },
+            follow_redirects=True,
+        )
+        assert b"Too many failed" in resp.data
 
         # user_b should still be able to log in from the same IP
-        resp = client.post('/auth/login', data={
-            'username': 'nat_user_b',
-            'password': 'Bob12345',
-        }, follow_redirects=True)
+        resp = client.post(
+            "/auth/login",
+            data={
+                "username": "nat_user_b",
+                "password": "Bob12345",
+            },
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'Dashboard' in resp.data
+        assert b"Dashboard" in resp.data
 
     def test_username_throttled_across_ips(self, client, app):
         """Distributed brute force: many IPs attacking one user still throttles."""
-        _register(client, username='target', password='Target1!')
+        _register(client, username="target", password="Target1!")
 
         # Simulate 5 different IPs (via X-Forwarded-For) attacking same user.
         for i in range(5):
-            client.post('/auth/login', data={
-                'username': 'target',
-                'password': 'WrongPass1',
-            }, headers={'X-Forwarded-For': f'10.0.0.{i}'}, follow_redirects=True)
+            client.post(
+                "/auth/login",
+                data={
+                    "username": "target",
+                    "password": "WrongPass1",
+                },
+                headers={"X-Forwarded-For": f"10.0.0.{i}"},
+                follow_redirects=True,
+            )
 
         # A 6th IP with the right password should still be throttled.
-        resp = client.post('/auth/login', data={
-            'username': 'target',
-            'password': 'Target1!',
-        }, headers={'X-Forwarded-For': '10.0.0.99'}, follow_redirects=True)
+        resp = client.post(
+            "/auth/login",
+            data={
+                "username": "target",
+                "password": "Target1!",
+            },
+            headers={"X-Forwarded-For": "10.0.0.99"},
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
-        assert b'Too many failed' in resp.data
+        assert b"Too many failed" in resp.data
 
     def test_throttled_attempt_is_recorded(self, client, app):
-        _register(client, username='tracked', password='Tracked1')
+        _register(client, username="tracked", password="Tracked1")
 
         for _ in range(5):
-            client.post('/auth/login', data={
-                'username': 'tracked',
-                'password': 'WrongPass1',
-            }, follow_redirects=True)
+            client.post(
+                "/auth/login",
+                data={
+                    "username": "tracked",
+                    "password": "WrongPass1",
+                },
+                follow_redirects=True,
+            )
 
-        count = app.db_session.query(LoginAttempt).filter_by(
-            success=False).count()
+        count = app.db_session.query(LoginAttempt).filter_by(success=False).count()
         assert count >= 5
 
     def test_old_failed_attempts_dont_count(self, client, app):
-        _register(client, username='expired', password='Expired1')
+        _register(client, username="expired", password="Expired1")
 
         # Seed old failed attempts (outside window)
-        old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
+        old_time = datetime.now(UTC) - timedelta(minutes=20)
         for _ in range(5):
-            app.db_session.add(LoginAttempt(
-                ip_address='127.0.0.1',
-                username='expired',
-                success=False,
-                attempted_at=old_time,
-            ))
+            app.db_session.add(
+                LoginAttempt(
+                    ip_address="127.0.0.1",
+                    username="expired",
+                    success=False,
+                    attempted_at=old_time,
+                )
+            )
         app.db_session.commit()
 
         # Should still be able to login (old attempts expired)
-        resp = _login(client, username='expired', password='Expired1')
+        resp = _login(client, username="expired", password="Expired1")
         assert resp.status_code == 200
-        assert b'Dashboard' in resp.data
+        assert b"Dashboard" in resp.data
 
     def test_successful_attempts_dont_count_toward_throttle(self, client, app):
-        _register(client, username='good', password='GoodPass1')
+        _register(client, username="good", password="GoodPass1")
 
         # Mix of success and failure
         for _ in range(5):
-            _login(client, username='good', password='GoodPass1')
-            client.get('/auth/logout', follow_redirects=True)
+            _login(client, username="good", password="GoodPass1")
+            client.get("/auth/logout", follow_redirects=True)
 
         # Only failed attempts count toward throttle
-        resp = _login(client, username='good', password='GoodPass1')
+        resp = _login(client, username="good", password="GoodPass1")
         assert resp.status_code == 200
-        assert b'Dashboard' in resp.data
+        assert b"Dashboard" in resp.data
 
 
 class TestSessionProtection:
@@ -302,36 +385,36 @@ class TestSessionProtection:
     def test_session_cookie_has_httponly(self, client, app):
         _register(client)
         resp = _login(client)
-        cookies = resp.headers.getlist('Set-Cookie')
-        session_cookie = [c for c in cookies if 'session' in c.lower()]
+        cookies = resp.headers.getlist("Set-Cookie")
+        session_cookie = [c for c in cookies if "session" in c.lower()]
         if session_cookie:
-            assert 'HttpOnly' in session_cookie[0]
+            assert "HttpOnly" in session_cookie[0]
 
     def test_logout_clears_session(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.get('/dashboard')
+        resp = client.get("/dashboard")
         assert resp.status_code == 200
 
-        client.get('/auth/logout', follow_redirects=True)
+        client.get("/auth/logout", follow_redirects=True)
 
-        resp = client.get('/dashboard')
+        resp = client.get("/dashboard")
         assert resp.status_code == 302
-        assert '/auth/login' in resp.headers['Location']
+        assert "/auth/login" in resp.headers["Location"]
 
     def test_login_page_redirects_if_authenticated(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.get('/auth/login', follow_redirects=True)
+        resp = client.get("/auth/login", follow_redirects=True)
         assert resp.status_code == 200
-        assert b'Dashboard' in resp.data
+        assert b"Dashboard" in resp.data
 
     def test_register_page_redirects_if_authenticated(self, client, app):
         _register(client)
         _login(client)
 
-        resp = client.get('/auth/register', follow_redirects=True)
+        resp = client.get("/auth/register", follow_redirects=True)
         assert resp.status_code == 200
-        assert b'Dashboard' in resp.data
+        assert b"Dashboard" in resp.data

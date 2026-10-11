@@ -1,19 +1,31 @@
 """Unit tests for transport module."""
+
 import socket
 import threading
 import time
 
 import pytest
+from serial import SerialException
 
 from retrobridge.transport import (
-    open_transport, transport_uses_baud, _parse_host_port, _SocketWrapper,
+    _parse_host_port,
+    _SocketWrapper,
+    open_transport,
+    transport_uses_baud,
 )
 
 
 class MockPort:
-    def __init__(self, transport='serial', dev_path='/dev/null',
-                 baud=9600, data_bits=8, parity='N', stop_bits=1,
-                 flow_control='none'):
+    def __init__(
+        self,
+        transport="serial",
+        dev_path="/dev/null",
+        baud=9600,
+        data_bits=8,
+        parity="N",
+        stop_bits=1,
+        flow_control="none",
+    ):
         self.transport = transport
         self.dev_path = dev_path
         self.baud = baud
@@ -25,23 +37,23 @@ class MockPort:
 
 class TestTransportUsesBaud:
     def test_serial_uses_baud(self):
-        port = MockPort(transport='serial')
+        port = MockPort(transport="serial")
         assert transport_uses_baud(port) is True
 
     def test_pty_uses_baud(self):
-        port = MockPort(transport='pty')
+        port = MockPort(transport="pty")
         assert transport_uses_baud(port) is True
 
     def test_rfc2217_uses_baud(self):
-        port = MockPort(transport='rfc2217')
+        port = MockPort(transport="rfc2217")
         assert transport_uses_baud(port) is True
 
     def test_tcp_does_not_use_baud(self):
-        port = MockPort(transport='tcp')
+        port = MockPort(transport="tcp")
         assert transport_uses_baud(port) is False
 
     def test_telnet_does_not_use_baud(self):
-        port = MockPort(transport='telnet')
+        port = MockPort(transport="telnet")
         assert transport_uses_baud(port) is False
 
     def test_none_transport_defaults_to_serial(self):
@@ -51,37 +63,37 @@ class TestTransportUsesBaud:
 
 class TestParseHostPort:
     def test_colon_format(self):
-        host, port = _parse_host_port('127.0.0.1:8023')
-        assert host == '127.0.0.1'
+        host, port = _parse_host_port("127.0.0.1:8023")
+        assert host == "127.0.0.1"
         assert port == 8023
 
     def test_space_format(self):
-        host, port = _parse_host_port('127.0.0.1 8023')
-        assert host == '127.0.0.1'
+        host, port = _parse_host_port("127.0.0.1 8023")
+        assert host == "127.0.0.1"
         assert port == 8023
 
     def test_hostname(self):
-        host, port = _parse_host_port('emu.local:10023')
-        assert host == 'emu.local'
+        host, port = _parse_host_port("emu.local:10023")
+        assert host == "emu.local"
         assert port == 10023
 
     def test_no_port_raises(self):
-        with pytest.raises(Exception):
-            _parse_host_port('127.0.0.1')
+        with pytest.raises(SerialException):
+            _parse_host_port("127.0.0.1")
 
     def test_invalid_port_raises(self):
-        with pytest.raises(Exception):
-            _parse_host_port('127.0.0.1:abc')
+        with pytest.raises(SerialException):
+            _parse_host_port("127.0.0.1:abc")
 
 
 class TestTcpTransport:
     def test_tcp_connect_and_read(self):
-        data = b'HELLO FROM TCP\r\n'
+        data = b"HELLO FROM TCP\r\n"
         ready = threading.Event()
         result = []
 
         def echo_server():
-            srv = socket.create_server(('127.0.0.1', 0))
+            srv = socket.create_server(("127.0.0.1", 0))
             addr = srv.getsockname()
             result.append(addr[1])
             ready.set()
@@ -94,12 +106,11 @@ class TestTcpTransport:
         t.start()
         ready.wait(timeout=3)
 
-        port_obj = MockPort(transport='tcp',
-                            dev_path=f'127.0.0.1:{result[0]}')
+        port_obj = MockPort(transport="tcp", dev_path=f"127.0.0.1:{result[0]}")
         ser = open_transport(port_obj)
         try:
             time.sleep(0.2)
-            received = b''
+            received = b""
             deadline = time.time() + 3
             while time.time() < deadline:
                 chunk = ser.read(1024)
@@ -114,24 +125,24 @@ class TestTcpTransport:
             t.join(timeout=2)
 
     def test_tcp_bad_host_raises(self):
-        port = MockPort(transport='tcp', dev_path='127.0.0.1:19999')
-        with pytest.raises(Exception):
+        port = MockPort(transport="tcp", dev_path="127.0.0.1:19999")
+        with pytest.raises(SerialException):
             open_transport(port)
 
     def test_tcp_invalid_port_raises(self):
-        port = MockPort(transport='tcp', dev_path='127.0.0.1:abc')
-        with pytest.raises(Exception):
+        port = MockPort(transport="tcp", dev_path="127.0.0.1:abc")
+        with pytest.raises(SerialException):
             open_transport(port)
 
 
 class TestSocketWrapper:
     def test_read_write(self):
-        data = b'TEST DATA'
+        data = b"TEST DATA"
         ready = threading.Event()
         result = []
 
         def echo_server():
-            srv = socket.create_server(('127.0.0.1', 0))
+            srv = socket.create_server(("127.0.0.1", 0))
             addr = srv.getsockname()
             result.append(addr[1])
             result.append(srv)
@@ -146,7 +157,7 @@ class TestSocketWrapper:
         t.start()
         ready.wait(timeout=3)
 
-        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        sock = socket.create_connection(("127.0.0.1", result[0]), timeout=3)
         wrapper = _SocketWrapper(sock)
         try:
             wrapper.write(data)
@@ -163,7 +174,7 @@ class TestSocketWrapper:
         result = []
 
         def server():
-            srv = socket.create_server(('127.0.0.1', 0))
+            srv = socket.create_server(("127.0.0.1", 0))
             result.append(srv.getsockname()[1])
             result.append(srv)
             ready.set()
@@ -175,7 +186,7 @@ class TestSocketWrapper:
         t.start()
         ready.wait(timeout=3)
 
-        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        sock = socket.create_connection(("127.0.0.1", result[0]), timeout=3)
         wrapper = _SocketWrapper(sock)
         wrapper.close()
         assert wrapper.is_open is False
@@ -187,7 +198,7 @@ class TestSocketWrapper:
         result = []
 
         def server():
-            srv = socket.create_server(('127.0.0.1', 0))
+            srv = socket.create_server(("127.0.0.1", 0))
             result.append(srv.getsockname()[1])
             ready.set()
             conn, _ = srv.accept()
@@ -198,7 +209,7 @@ class TestSocketWrapper:
         t.start()
         ready.wait(timeout=3)
 
-        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        sock = socket.create_connection(("127.0.0.1", result[0]), timeout=3)
         wrapper = _SocketWrapper(sock)
         try:
             assert wrapper.fileno() > 0
@@ -213,16 +224,17 @@ class TestSocketWrapper:
         # A wrapper without a live socket is a closed connection: the new
         # contract is to raise SerialException rather than hang silently.
         from serial import SerialException
+
         with pytest.raises(SerialException):
-            wrapper.in_waiting
+            _ = wrapper.in_waiting
 
     def test_in_waiting_drains_socket_into_buffer(self):
         ready = threading.Event()
         result = []
-        payload = b'hello world'
+        payload = b"hello world"
 
         def server():
-            srv = socket.create_server(('127.0.0.1', 0))
+            srv = socket.create_server(("127.0.0.1", 0))
             result.append(srv.getsockname()[1])
             result.append(srv)
             ready.set()
@@ -235,7 +247,7 @@ class TestSocketWrapper:
         t.start()
         ready.wait(timeout=3)
 
-        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        sock = socket.create_connection(("127.0.0.1", result[0]), timeout=3)
         wrapper = _SocketWrapper(sock)
         try:
             # Give the server a moment to send.
@@ -251,11 +263,11 @@ class TestTelnetNegotiate:
     def test_preserves_non_iac_data(self):
         ready = threading.Event()
         result = []
-        payload = b'login: '
+        payload = b"login: "
         will_echo = bytes([255, 251, 1])  # IAC WILL ECHO
 
         def server():
-            srv = socket.create_server(('127.0.0.1', 0))
+            srv = socket.create_server(("127.0.0.1", 0))
             result.append(srv.getsockname()[1])
             result.append(srv)
             ready.set()
@@ -273,9 +285,10 @@ class TestTelnetNegotiate:
         t.start()
         ready.wait(timeout=3)
 
-        sock = socket.create_connection(('127.0.0.1', result[0]), timeout=3)
+        sock = socket.create_connection(("127.0.0.1", result[0]), timeout=3)
         try:
             from retrobridge.transport import _telnet_negotiate
+
             data = _telnet_negotiate(sock, timeout=1)
             assert data == payload
         finally:
@@ -307,6 +320,7 @@ class TestTelnetNegotiateSplit:
         t.start()
         try:
             from retrobridge.transport import _telnet_negotiate
+
             out = _telnet_negotiate(a, timeout=2)
         finally:
             t.join(timeout=3)
@@ -323,40 +337,45 @@ class TestTelnetNegotiateSplit:
 
     def test_will_command_split_is_answered_not_literal(self):
         # "IAC WILL 1" split → respond IAC DONT 1, no data out.
-        assert self._run_split(bytes([255]), bytes([251, 1])) == b''
+        assert self._run_split(bytes([255]), bytes([251, 1])) == b""
 
     def test_unknown_command_split_is_dropped_like_single_chunk(self):
         # In-chunk "IAC X Y" drops the pair and keeps Y; split must match.
-        assert self._run_split(bytes([255]), bytes([88, 89])) == b'Y'
+        assert self._run_split(bytes([255]), bytes([88, 89])) == b"Y"
 
 
 class TestUnknownTransport:
     def test_unknown_transport_raises(self):
-        port = MockPort(transport='bluetooth')
-        with pytest.raises(ValueError, match='Unknown transport'):
+        port = MockPort(transport="bluetooth")
+        with pytest.raises(ValueError, match="Unknown transport"):
             open_transport(port)
 
 
 class TestOpenSerial:
     def test_serial_uses_device_path(self, monkeypatch):
-        from serial import Serial
         import retrobridge.transport as tmod
+
         calls = []
 
         def fake_serial(**kwargs):
             calls.append(kwargs)
-            m = __import__('unittest.mock', fromlist=['MagicMock'])
+            m = __import__("unittest.mock", fromlist=["MagicMock"])
             ser = m.MagicMock()
             ser.is_open = True
-            ser.baudrate = kwargs.get('baudrate', 9600)
+            ser.baudrate = kwargs.get("baudrate", 9600)
             return ser
 
-        monkeypatch.setattr(tmod, 'Serial', fake_serial)
-        port = MockPort(transport='serial', dev_path='/dev/ttyUSB0',
-                        baud=9600, parity='N', flow_control='none')
+        monkeypatch.setattr(tmod, "Serial", fake_serial)
+        port = MockPort(
+            transport="serial",
+            dev_path="/dev/ttyUSB0",
+            baud=9600,
+            parity="N",
+            flow_control="none",
+        )
         ser = open_transport(port)
         assert ser.is_open
         assert ser.baudrate == 9600
         assert len(calls) == 1
-        assert calls[0]['port'] == '/dev/ttyUSB0'
+        assert calls[0]["port"] == "/dev/ttyUSB0"
         ser.close()

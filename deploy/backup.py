@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Standalone SQLite backup script for RetroBridge.
 
@@ -34,8 +33,12 @@ load_dotenv()
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_root)
 
-import config  # noqa: E402
-from retrobridge.backup import backup_database, prune_backups, list_backups  # noqa: E402
+import config
+from retrobridge.backup import (
+    backup_database,
+    list_backups,
+    prune_backups,
+)
 
 
 def _default_db_uri():
@@ -44,62 +47,64 @@ def _default_db_uri():
 
 def main():
     parser = argparse.ArgumentParser(
-        description='RetroBridge database backup script.',
+        description="RetroBridge database backup script.",
     )
     parser.add_argument(
-        '--db-uri',
+        "--db-uri",
         default=None,
-        help='SQLite URI (default: from DATABASE_URL env or instance path)',
+        help="SQLite URI (default: from DATABASE_URL env or instance path)",
     )
     parser.add_argument(
-        '--backup-dir',
+        "--backup-dir",
         default=None,
-        help='Backup destination directory (default: backups/ under project root)',
+        help="Backup destination directory (default: backups/ under project root)",
     )
     parser.add_argument(
-        '--no-compress',
-        action='store_true',
-        help='Skip gzip compression',
+        "--no-compress",
+        action="store_true",
+        help="Skip gzip compression",
     )
     parser.add_argument(
-        '--retention-days',
+        "--retention-days",
         type=int,
         default=None,
-        help='Max backup age in days (default: 30, 0 to disable)',
+        help="Max backup age in days (default: 30, 0 to disable)",
     )
     parser.add_argument(
-        '--retention-count',
+        "--retention-count",
         type=int,
         default=None,
-        help='Max backup files to keep (default: 10, 0 to disable)',
+        help="Max backup files to keep (default: 10, 0 to disable)",
     )
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Show what would be done without writing anything',
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without writing anything",
     )
     parser.add_argument(
-        '--label',
-        default='cron',
+        "--label",
+        default="cron",
         help='Label embedded in the backup filename (default: "cron")',
     )
     args = parser.parse_args()
 
     db_uri = args.db_uri or _default_db_uri()
-    backup_dir = args.backup_dir or os.path.join(_project_root, 'backups')
+    backup_dir = args.backup_dir or os.path.join(_project_root, "backups")
     retention_days = args.retention_days if args.retention_days is not None else 30
     retention_count = args.retention_count if args.retention_count is not None else 10
 
     if args.dry_run:
-        print(f'[DRY RUN] Would backup: {db_uri}')
-        print(f'[DRY RUN] Backup dir:  {backup_dir}')
-        print(f'[DRY RUN] Compress:    {not args.no_compress}')
-        print(f'[DRY RUN] Retention:   {retention_days} days, {retention_count} files max')
+        print(f"[DRY RUN] Would backup: {db_uri}")
+        print(f"[DRY RUN] Backup dir:  {backup_dir}")
+        print(f"[DRY RUN] Compress:    {not args.no_compress}")
+        print(
+            f"[DRY RUN] Retention:   {retention_days} days, {retention_count} files max"
+        )
         existing = list_backups(backup_dir)
         if existing:
-            print(f'[DRY RUN] Existing backups: {len(existing)}')
+            print(f"[DRY RUN] Existing backups: {len(existing)}")
             for b in existing:
-                print(f'  {b["filename"]}  ({b["size_bytes"]} bytes)')
+                print(f"  {b['filename']}  ({b['size_bytes']} bytes)")
         return 0
 
     os.makedirs(backup_dir, exist_ok=True)
@@ -112,23 +117,23 @@ def main():
             label=args.label,
         )
         size = os.path.getsize(path)
-        print(f'Backup created: {path} ({size} bytes)')
+        print(f"Backup created: {path} ({size} bytes)")
     except FileNotFoundError as e:
-        print(f'ERROR: {e}', file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    except Exception as e:
-        print(f'ERROR: Backup failed: {e}', file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 — CLI boundary: report any failure
+        print(f"ERROR: Backup failed: {e}", file=sys.stderr)
         return 1
 
     try:
         removed = prune_backups(backup_dir, retention_days, retention_count)
         for r in removed:
-            print(f'Pruned old backup: {os.path.basename(r)}')
-    except Exception as e:
-        print(f'WARNING: Pruning failed: {e}', file=sys.stderr)
+            print(f"Pruned old backup: {os.path.basename(r)}")
+    except Exception as e:  # noqa: BLE001 — pruning is best-effort, never fatal
+        print(f"WARNING: Pruning failed: {e}", file=sys.stderr)
 
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
